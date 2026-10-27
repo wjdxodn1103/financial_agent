@@ -1,0 +1,24 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/.env
+backend/data/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# 외부 기관 공개 보고서 원문 — 재배포하지 않는다(받는 곳은 demo/public_samples/README.md)
+demo/public_samples/*.pdf
+# 공모전 기획서 초안 — 공개 저장소에 올리지 않는다
+docs/*기획서*
+# 데모 스크립트가 남기는 id
+demo/.demo_ws
+demo/.demo_report
+demo/.rehearsal_*
+demo/nbim/.ws
+demo/nbim/.report

@@ -1,0 +1,15 @@
+fastapi==0.116.1
+starlette==0.47.2
+uvicorn==0.35.0
+pydantic==2.11.7
+sqlmodel==0.0.27
+httpx==0.28.1
+python-multipart>=0.0.9
+python-dotenv==1.1.0
+PyMuPDF==1.26.7
+python-docx==1.2.0
+openpyxl==3.1.5
+tzdata==2026.5  # Windows 에는 IANA 시간대 DB 가 없다(기록 비서 퇴근 시각)
+numpy==1.26.4
+qdrant-client==1.20.0  # 벡터 저장소 — 기본 로컬 모드(data/qdrant), QDRANT_URL 이면 서버
+regex==2026.9.10

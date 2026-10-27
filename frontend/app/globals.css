@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+/*
+ * 색 체계 — 구조는 문서형 업무 툴(왼쪽 공간 사이드바·경로·문서형 본문), 톤은 맑은 금융 앱 톤
+ * (밝은 파랑 하나 + 회색 단계, 테두리 대신 면, 큰 숫자, 넉넉한 여백). 액센트를 바꾸려면 --accent-base 한 줄만.
+ * Tailwind 의 neutral 단계도 아래 회색으로 바꿔 둔다(border-neutral-200 같은 기존 클래스가 그대로 새 톤이 된다).
+ */
+:root {
+  --accent-base: #3182f6;
+  --accent-contrast: #ffffff;
+
+  --primary: var(--accent-base);
+  --primary-foreground: var(--accent-contrast);
+  --primary-hover: #1b64da;
+  --primary-soft: #e8f3ff;
+  --primary-soft-border: #c9e2ff;
+  --primary-soft-foreground: #1b64da;
+
+  --grey50: #f9fafb;
+  --grey100: #f2f4f6;
+  --grey200: #e5e8eb;
+  --grey300: #d1d6db;
+  --grey400: #b0b8c1;
+  --grey500: #8b95a1;
+  --grey600: #6b7684;
+  --grey700: #4e5968;
+  --grey800: #333d4b;
+  --grey900: #191f28;
+  --gray400: var(--grey300);
+  --text-primary: var(--grey900);
+  --text-secondary: var(--grey600);
+  --background-gray: var(--grey50);
+
+  --background: #ffffff;
+  --muted-foreground: var(--grey500);
+  --destructive: #f04452;
+  --ring: var(--accent-base);
+}
+
+@font-face {
+  font-family: "Pretendard";
+  src: url("/fonts/PretendardVariable.woff2") format("woff2");
+  font-display: swap;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-border: var(--primary-soft-border);
+  --color-primary-soft-foreground: var(--primary-soft-foreground);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-background-gray: var(--background-gray);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-ring: var(--ring);
+  --color-neutral-50: var(--grey50);
+  --color-neutral-100: var(--grey100);
+  --color-neutral-200: var(--grey200);
+  --color-neutral-300: var(--grey300);
+  --color-neutral-400: var(--grey400);
+  --color-neutral-500: var(--grey500);
+  --color-neutral-600: var(--grey600);
+  --color-neutral-700: var(--grey700);
+  --color-neutral-800: var(--grey800);
+  --color-neutral-900: var(--grey900);
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+  --font-sans: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 큰 숫자(금액·건수)는 고정폭 숫자로 — 줄이 맞아 보이게 */
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* 스튜디오 전용 — OP-FE features/paper/styles.css 그대로(.chat-prose .stream-caret .dot-bounce .thin-scrollbar) */
+.chat-prose {
+  font-family: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+@keyframes paper-blink-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.stream-caret::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--primary);
+  animation: paper-blink-caret 0.9s steps(1) infinite;
+}
+
+@keyframes paper-dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+.dot-bounce span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--muted-foreground);
+  animation: paper-dot-bounce 1.2s infinite ease-in-out;
+}
+.dot-bounce span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.dot-bounce span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--gray400);
+  border-radius: 9999px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
