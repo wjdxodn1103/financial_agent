@@ -220,7 +220,7 @@ async def llm_claims(llm: Any, chunks: Sequence[Dict[str, Any]], years: Optional
     proposed = rejected = 0
     for b in batches:
         user = "\n\n".join(f"[{c['id']}]{(' § ' + c['heading']) if c.get('heading') else ''}\n{c.get('text') or ''}" for c in b)
-        params = ChatParams(messages=[{"role": "system", "content": CLAIM_SYSTEM}, {"role": "user", "content": user}], temperature=0.0, max_tokens=4000, reasoning_effort="low", timeout_s=180)
+        params = ChatParams(messages=[{"role": "system", "content": CLAIM_SYSTEM}, {"role": "user", "content": user}], temperature=0.0, max_tokens=4000, timeout_s=180)
         try:
             res = await llm.complete("chat", params)
         except Exception as e:  # noqa: BLE001 — 한 배치 실패는 규칙 추출로 메운다

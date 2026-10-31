@@ -11,7 +11,8 @@ import { ChevronRight, CircleAlert, FileText, FolderOpen, Loader2, NotebookPen, 
 
 import ChatMarkdown from "@/components/ChatMarkdown";
 import { cn } from "@/lib/utils";
-import { activeTableIdAtom, messagesAtom, panelsAtom, streamingAtom, tablesAtom } from "../../atoms";
+import { activeTableIdAtom, messagesAtom, panelsAtom, sessionAtom, streamingAtom, tablesAtom } from "../../atoms";
+import { Thumbs } from "../../../workspace/components/Thumbs";
 import { toolLabel } from "../../constants";
 import { errorText, useReportActions } from "../../hooks/useReportStudio";
 import type { ChatMessage, ToolRun } from "../../types";
@@ -22,6 +23,8 @@ import { ApprovalCard } from "./ApprovalCard";
 import { useCiteComponents } from "./citeLinks";
 import { ImportCards } from "./ImportCards";
 import { PlanCard } from "./PlanCard";
+import { ProposalCard } from "../../../routines/ProposalCard";
+import { EventAlertCard } from "../../../calendar/EventAlertCard";
 import { SectionCard } from "./SectionCard";
 
 const STICK_THRESHOLD = 48;
@@ -94,6 +97,7 @@ function AssistantBlock({ message, previous, isLast }: { message: ChatMessage; p
   const panels = useAtomValue(panelsAtom);
   const tables = useAtomValue(tablesAtom);
   const ws = useWorkspace();
+  const session = useAtomValue(sessionAtom);
   // 답 속 출처 링크 → 문서 보기에 그 문단
   const cite = useCiteComponents(actions.openDocument);
   const retryText = previous?.role === "user" ? previous.text : null;
@@ -134,6 +138,7 @@ function AssistantBlock({ message, previous, isLast }: { message: ChatMessage; p
           </button>
         );
       })}
+      {message.proposals?.map((p, i) => (p.kind === "event_alert" ? <EventAlertCard key={i} p={p} /> : <ProposalCard key={i} p={p} />))}
       {message.plan && <PlanCard plan={message.plan} />}
       {message.sectionUpdates?.map((u) => <SectionCard key={u.step} msgId={message.id} update={u} />)}
       {message.text && (
@@ -148,15 +153,24 @@ function AssistantBlock({ message, previous, isLast }: { message: ChatMessage; p
         <div className="rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-xs font-medium text-neutral-800">{errorText(message.error)}</div>
       )}
       {!message.streaming && !message.error && !message.imports && message.text.trim().length > 20 && (
-        <button
-          type="button"
-          onClick={() => void actions.saveNote(message.id)}
-          title="이 답을 메모로 남기기(출처째)"
-          className="inline-flex w-fit cursor-pointer items-center gap-1 rounded-md px-1 text-[11px] text-text-secondary opacity-0 transition-opacity group-hover:opacity-100 hover:text-primary"
-        >
-          <NotebookPen className="size-3" aria-hidden />
-          메모로 저장
-        </button>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={() => void actions.saveNote(message.id)}
+            title="이 답을 메모로 남기기(출처째)"
+            className="inline-flex w-fit cursor-pointer items-center gap-1 rounded-md px-1 text-[11px] text-text-secondary hover:text-primary"
+          >
+            <NotebookPen className="size-3" aria-hidden />
+            메모로 저장
+          </button>
+          {isLast && !streaming && retryText && (
+            <button type="button" onClick={() => void actions.send(retryText)} title="같은 질문으로 다시 답하기" className="inline-flex w-fit cursor-pointer items-center gap-1 rounded-md px-1 text-[11px] text-text-secondary hover:text-primary">
+              <RotateCcw className="size-3" aria-hidden />
+              다시 생성
+            </button>
+          )}
+          {FEATURES.feedback && session && <Thumbs targetKind="answer" targetId={`${session.id}:${message.id}`} />}
+        </div>
       )}
       {canRetry && retryText && (
         <button

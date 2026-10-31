@@ -353,7 +353,7 @@ async def llm_row(llm: Any, scope: Scope, kind: str, subject: Dict[str, Any], do
     try:
         answer: Dict[str, Any] = {}
         for _try in range(2):  # 생각만 하다 상한에 걸려 빈 답이 오면 한 번 더
-            res = await llm.complete("chat", ChatParams(messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], max_tokens=LLM_MAX_TOKENS, timeout_s=LLM_TIMEOUT, reasoning_effort="low"))
+            res = await llm.complete("chat", ChatParams(messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], max_tokens=LLM_MAX_TOKENS, timeout_s=LLM_TIMEOUT))
             answer = _parse_json(res.content) or {}
             if answer:
                 break
@@ -586,6 +586,12 @@ async def fill_table(data: Dict[str, Any], doc_ids: Sequence[str], choices: Dict
             for it in todo:
                 rows[i].setdefault(it["key"], empty())
     await emit(total)
+    try:
+        from app.anchors import pin_table_cells
+
+        await asyncio.to_thread(pin_table_cells, data)  # 칸이 기댄 원문 칸·문단을 지금 원문으로 얼린다
+    except Exception:  # noqa: BLE001
+        log.exception("pin table cells failed")
     return data
 
 

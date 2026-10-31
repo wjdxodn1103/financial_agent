@@ -21,11 +21,11 @@ from app.docs.citations import _MARKER, _SENT_SPLIT
 from app.docs.store import load_chunks
 from app.ledger.calc import readable
 from app.ledger.figures import Figure
-from app.ledger.numbers import find_amounts, is_rounding_of, same_value
+from app.ledger.numbers import find_amounts, is_rounding_of, loss_variants, same_value, scale_slip, sig_digits
 from app.report.view import build_report_view
 
 STATUS_KO = {"source": "자료와 일치", "calc": "계산값", "input": "입력값", "mismatch": "원장과 다름", "unsourced": "출처 없음"}
-FLAG_KO = {"notCited": "인용하지 않은 자료의 값", "conflict": "자료마다 다른 값", "notChosen": "채택값과 다름"}
+FLAG_KO = {"notCited": "인용하지 않은 자료의 값", "conflict": "자료마다 다른 값", "notChosen": "채택값과 다름", "scale": "단위 의심(자릿수 차이)"}
 _COUNT_UNITS = ("개", "건")  # 메타 숫자(“3개 자료”)는 확인 대상이 아니다
 
 
@@ -101,6 +101,12 @@ class _Judge:
         self.evidence = doc.get("evidence") or {}
         # 섹션에 넣은 AI 채팅 표의 계산 칸(영업이익률 등) — 본문이 그 값을 쓰면 계산값으로 본다
         self.table_calcs = {s["step"]: [c for t in s.get("tables") or [] for c in t.get("calcs") or []] for s in doc.get("sections") or []}
+        if doc.get("layout"):  # 틀(양식 2.0) 문서 — 섹션에 묶인 표의 계산 칸(비율·증가율)도
+            from app.formats.blocks import section_format_blocks
+
+            for s in doc.get("sections") or []:
+                if s.get("blocks"):
+                    self.table_calcs.setdefault(s["step"], []).extend(c for b in section_format_blocks(doc, s) for c in b.get("calcs") or [])
         self.user_text = re.sub(r"\s+", "", " ".join(v for v in (doc.get("userInputs") or {}).values() if isinstance(v, str)))
         self._chunks: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
@@ -133,6 +139,10 @@ class _Judge:
 
     def judge(self, e: Dict[str, Any]) -> Dict[str, Any]:
         a = e["amount"]
+        cands = loss_variants(a, e.get("sentence") or "")  # 손실 문맥이면 부호 뒤집은 값도
+
+        def same(x: Dict[str, Any]) -> bool:
+            return any(_same(c, x) for c in cands)
         cited_docs = {d for d, _c in e["anchors"]}
         # (a) 인용한 문단 — 표면 그 칸, 글이면 같은 값이 든 자리
         for d, c in e["anchors"]:
@@ -140,17 +150,17 @@ class _Judge:
             if not ch:
                 continue
             if ch.get("rows"):
-                hit = next((f for f in self.figures if f["doc"] == d and f["chunk"] == c and _same(a, f)), None)
+                hit = next((f for f in self.figures if f["doc"] == d and f["chunk"] == c and same(f)), None)
                 if hit:
                     flags, info = self._flags(hit, True)
                     return {"status": "source", "flags": flags, "source": self._fig_ref(hit, "cited-cell"), "group": info}
             text = ch.get("text") or ""
-            m = next((b for b in find_amounts(text) if _same(a, b)), None)
+            m = next((b for b in find_amounts(text) if same(b)), None)
             if m:
                 label = next((f.get("docLabel") for f in self.figures if f["doc"] == d), None)
                 return {"status": "source", "flags": [], "source": {"via": "cited-text", "docId": d, "label": label or d[:8], "chunk": c, "page": ch.get("page"), "sheet": ch.get("sheet"), "cell": None, "display": m["raw"], "quote": _snippet(text, m["start"], m["end"]), "column": "", "metric": "", "period": ""}, "group": None}
         # (b) 원장 — 인용한 자료의 같은 값
-        hits = [f for f in self.figures if _same(a, f)]
+        hits = [f for f in self.figures if same(f)]
         hits.sort(key=lambda f: (f["doc"] not in cited_docs, not (self.group_of.get(f["fid"]) or {}).get("chosen"), -((self.group_of.get(f["fid"]) or {}).get("documents") or 0)))
         if hits and hits[0]["doc"] in cited_docs:
             flags, info = self._flags(hits[0], True)
@@ -176,6 +186,17 @@ class _Judge:
         # (f) 사용자 입력
         if a["raw"].replace(" ", "") and a["raw"].replace(" ", "") in self.user_text:
             return {"status": "input", "flags": []}
+        # (g) 단위 의심 — 유효 숫자는 인용 문단·원장 금액과 같은데 자릿수가 10^k 배 다르다(billion → 조·억 환산 실수)
+        if not a["percent"] and sig_digits(a["raw"]) >= 3:
+            for d, c in e["anchors"]:
+                ch = self.chunk(d, c) or {}
+                for b in find_amounts(ch.get("text") or ""):
+                    if not b["percent"] and b.get("unit") and any(scale_slip(c["abs"], b["abs"]) for c in cands):
+                        return {"status": "mismatch", "flags": ["scale"], "source": {"via": "cited-text", "docId": d, "label": d[:8], "chunk": c, "page": ch.get("page"), "sheet": ch.get("sheet"), "cell": None, "display": b["raw"], "quote": _snippet(ch.get("text") or "", b["start"], b["end"]), "column": "", "metric": "", "period": ""}, "group": None}
+            # 단위를 아는 금액 — 배율 칸(억원·billion)이거나 통화가 있는 원 단위 칸(DART '-5,572,218,496' 원 → 본문 '557.22억원')
+            f = next((f for f in self.figures if not f.get("percent") and f.get("abs") and f.get("unitKnown", True) and ((f.get("scale") or 1) > 1 or f.get("currency")) and any(scale_slip(c["abs"], f["abs"]) for c in cands) and f["doc"] in cited_docs), None)
+            if f:
+                return {"status": "mismatch", "flags": ["scale"], "source": self._fig_ref(f, "ledger"), "group": None}
         return {"status": "mismatch" if e["anchors"] else "unsourced", "flags": []}
 
 

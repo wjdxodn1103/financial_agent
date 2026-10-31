@@ -106,7 +106,7 @@ async def extract_records(llm: Any, bundle: Sequence[ChannelMessage], names: Dic
     convo = "\n".join(f"[{k}] {names.get(m.user_id or '', '?')} ({_local(m.created_at).strftime('%Y-%m-%d %H:%M')}): {m.text}" for k, m in numbered.items())
     today = local_now().strftime("%Y-%m-%d (%a)")
     system = f"{DIGEST_SYSTEM}\n오늘: {today}"
-    res = await llm.complete("chat", ChatParams(messages=[{"role": "system", "content": system}, {"role": "user", "content": convo}], temperature=0.0, max_tokens=3000, reasoning_effort="low", timeout_s=180))
+    res = await llm.complete("chat", ChatParams(messages=[{"role": "system", "content": system}, {"role": "user", "content": convo}], temperature=0.0, max_tokens=3000, timeout_s=180))
     out = []
     for x in _parse(res.content):
         refs = [str(r) for r in (x.get("messages") or []) if str(r) in numbered]

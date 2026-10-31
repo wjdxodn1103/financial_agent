@@ -56,7 +56,7 @@ export const modesAtom = atom<Modes>({ research: false, writing: false });
 /** 문서 판(중간 저장) */
 export const versionsAtom = atom<import("./types").DocVersion[]>([]);
 /** 원문 확인 창 — 가공한 값(원장 칸·표 칸·인용 문단)의 원본 위치 */
-export const sourceCheckAtom = atom<{ docId: string; chunk?: string | null; cell?: [number, number] | null; tick: number } | null>(null);
+export const sourceCheckAtom = atom<{ docId: string; chunk?: string | null; cell?: [number, number] | null; quote?: string | null; tick: number } | null>(null);
 /** 문서 작성 시작 — 양식 고르기 창(FormatPickDialog) */
 export const formatPickAtom = atom<boolean>(false);
 /** 데이터 설정 창(DataSettingsDialog) */

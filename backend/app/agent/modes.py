@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 from app.agent.session import Doc
 
 LOOKUP = ("search_documents", "lookup_figures", "calculate", "list_documents", "fetch_dart")
-WRITING = ("get_progress", "use_format", "set_report_meta", "write_section", "revise_section", "propose_plan", "continue_plan", "update_outline", "add_block", "remove_block")
+WRITING = ("get_progress", "read_section", "use_format", "set_report_meta", "write_section", "revise_section", "propose_plan", "continue_plan", "update_outline", "add_block", "remove_block")
 # research/tools.py 의 도구(이 대화 루프에서는 research.tools.run_tool 로 보낸다)
 FIND = ("find_items", "open_asset")
 RESEARCH_ONLY = ("build_table", "update_table", "build_chart", "extract_table", "save_template", "save_table_to_drive", "save_note", *FIND)
@@ -34,8 +34,11 @@ def normalize(raw: Any, doc: Doc) -> Dict[str, bool]:
     return {"research": False, "writing": has_doc(doc)}
 
 
+PROPOSE = ("propose_routine", "propose_source", "propose_event_alert")  # 대화로 등록(확인 카드) — 모드와 상관없이 늘
+
+
 def tool_names(modes: Dict[str, bool]) -> List[str]:
-    names: List[str] = []
+    names: List[str] = [*PROPOSE]
     if modes.get("research"):
         names += [*LOOKUP, *RESEARCH_ONLY]
     if modes.get("writing"):

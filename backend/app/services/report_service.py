@@ -24,6 +24,8 @@ from app.agent.modes import has_doc, normalize as normalize_modes
 from app.agent.session import find_section, log_section, new_doc, new_section_id, public_session, restore_version, save_version, seed_sections, set_section, written_sections
 from app.agent.template import DEFAULT_TYPE, REGISTERED, known_type, match_item, public_types
 from app.auth import ROLE_RANK, require_member
+from app import usage
+from app.notify import notify
 from app.db import ChannelMessage, Repo, ReportSession, Task, User, Workspace, company_ids, engine, iso, utcnow
 from app.docs.store import document_cards
 from app.drive import clean_scope, folders_of, place, report_scope_ids, scope_view, visible_folders
@@ -239,6 +241,10 @@ class ReportService:
                 raise HTTPException(400, "그런 섹션이 없습니다.")
             log_section(doc, body["step"], "본문 되돌리기(비움)" if content is None else f"화면에서 본문 편집 · {len(content)}자")
             doc["lastWrittenStep"] = None if content is None else body["step"]
+            if content is not None:
+                from app.anchors import pin_section
+
+                pin_section(doc, find_section(doc, body["step"]) or {})  # 사람이 고친 본문의 인용·숫자도 그 시점 원문으로
         else:
             raise HTTPException(400, "수정할 항목이 없습니다.")
         self.persist(row, doc)
@@ -259,6 +265,8 @@ class ReportService:
 
         if is_format((row.doc or {}).get("reportType")):
             raise HTTPException(400, "고정 양식 리포트는 섹션·표·그림이 양식으로 정해져 있어 DOCX 양식을 따로 등록하지 않습니다.")
+        if (row.doc or {}).get("layout"):
+            raise HTTPException(400, "샘플로 만든 문서 양식(장·소주제·표 양식)을 쓰는 문서라 DOCX 양식을 따로 등록하지 않습니다.")
         try:
             parsed = parse_template(src_path)
         except TemplateError as e:
@@ -310,7 +318,7 @@ class ReportService:
         from app.report.template_docx import fill_template
 
         row = self.access(session_id, user)
-        doc = row.doc or {}
+        doc = self._current_scope(row)
         tpl = TEMPLATE_DIR / f"{session_id}.docx"
         if doc.get("template") and tpl.exists():
             title = str((doc.get("setup") or {}).get("title") or "report")
@@ -318,14 +326,20 @@ class ReportService:
             return fill_template(tpl, doc), f"{safe}_{_time.strftime('%Y%m%d')}.docx"
         return build_docx(doc)
 
+    def _current_scope(self, row: ReportSession) -> Dict[str, Any]:
+        """내보내기용 문서 — 화면(payload)과 같은 지금의 데이터 범위로(저장된 documentIds 는 마지막 턴 때 값이라, 그 뒤 올린 자료가 표·차트에서 빠졌다)."""
+        doc = dict(row.doc or {})
+        doc["documentIds"] = report_scope_ids(self.session, self.repo.workspace(row.workspace_id), doc, row.created_by)
+        return doc
+
     def export_xlsx(self, session_id: str, user: User) -> Tuple[bytes, str]:
         """리포트의 표·그림 데이터(블록마다 시트 + 엑셀 막대 그래프) — 고정 양식의 표·그림과 넣은 AI 채팅 표."""
         from app.formats.registry import is_format
         from app.report.format_export import build_blocks_xlsx
 
         row = self.access(session_id, user)
-        doc = row.doc or {}
-        if not is_format(doc.get("reportType")) and not any(s.get("tables") for s in doc.get("sections") or []):
+        doc = self._current_scope(row)
+        if not is_format(doc.get("reportType")) and not doc.get("layout") and not any(s.get("tables") for s in doc.get("sections") or []):
             raise HTTPException(400, "내려받을 표가 없습니다.")
         return build_blocks_xlsx(doc)
 
@@ -464,7 +478,11 @@ class ReportService:
         if note.strip():
             text += f"\n“{note.strip()[:300]}”"
         self.repo.save(ChannelMessage(id=id36("c", 4), workspace_id=row.workspace_id, user_id=user.id, kind="system", text=text, meta={"mentions": [reviewer_id], "report": {"id": row.id, "title": title}, "taskId": task.id}))
+        notify(  # 채널 메시지는 숨긴 화면이라 알림함으로도(채널 글은 그대로 둔다)
+            [reviewer_id], workspace_id=row.workspace_id, kind="review", title=f"검토 요청 — {title}"[:200], body=f"{user.name} {user.title}님 · {line}",
+            link={"w": row.workspace_id, "v": "reports", "s": row.id}, ref={"kind": "report", "id": row.id}, session=self.session)
         doc["reviewRequest"] = {"reviewerId": reviewer_id, "requestedBy": user.id, "requestedAt": iso(utcnow()), "taskId": task.id, "note": note.strip()[:300], "summary": line, "state": r["state"]}
+        doc["approval"] = {**(doc.get("approval") or {}), "status": "review", "label": "검토 중", "reviewerId": reviewer_id, "at": iso(utcnow())}
         self.persist(row, doc)
         return self.readiness(session_id, user)
 
@@ -643,11 +661,14 @@ def _attach_table(doc: Dict[str, Any], owner_id: str, table_id: str) -> None:
 
 
 async def _produce_turn(es: EventStream, session_id: str, body: Dict[str, Any]) -> None:
+    started = time.monotonic()
+    workspace_id = ""
     try:
         with Session(engine) as s:
             row = ReportService(s).row_or_404(session_id)
             doc = copy.deepcopy(row.doc or {})
             workspace_id, owner_id = row.workspace_id, row.created_by
+        usage.bind(ws=workspace_id, feature="turn")  # 이 턴의 LLM 사용량을 워크스페이스로 묶는다
         if body.get("tableId"):
             await asyncio.to_thread(_attach_table, doc, owner_id, str(body["tableId"]))
         doc.update(await asyncio.to_thread(_workspace_context, workspace_id, doc, owner_id))
@@ -682,3 +703,4 @@ async def _produce_turn(es: EventStream, session_id: str, body: Dict[str, Any]) 
         release_lock(session_id)
         if _tasks.get(session_id) is asyncio.current_task():
             _tasks.pop(session_id, None)
+        await asyncio.to_thread(usage.activity, "turn", {"sessionId": session_id}, {"sec": round(time.monotonic() - started, 2), "approval": bool(body.get("approval"))}, ws=workspace_id)

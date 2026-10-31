@@ -65,11 +65,15 @@ const components: Components = {
   ),
 };
 
+// 굵게 안쪽 끝이 문장부호인데 바깥에 한글 조사가 바로 붙으면('**「발표 일정」**에') CommonMark 가 굵게로 못 닫아 별표가 그대로 보인다 —
+// 안쪽 끝에 폭 없는 공백을 끼워 닫히게 한다
+const fixBold = (s: string) => s.replace(/\*\*([^*\n]+?)\*\*/g, (m, inner: string) => (/^[\p{P}\p{S}]|[\p{P}\p{S}]$/u.test(inner) ? `**​${inner}​**` : m));
+
 function ChatMarkdownImpl({ content, className, components: extra }: { content: string; className?: string; components?: Partial<Components> }) {
   return (
     <div className={cn("text-sm leading-relaxed text-neutral-800 [word-break:break-word]", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={extra ? { ...components, ...extra } : components}>
-        {content}
+        {fixBold(content)}
       </ReactMarkdown>
     </div>
   );

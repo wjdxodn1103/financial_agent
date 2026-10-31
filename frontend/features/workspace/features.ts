@@ -42,4 +42,31 @@ export const FEATURES = {
   startCards: false,
   /** 문서 양식 메뉴의 '표·차트 양식' 탭(표 양식 고치기·지우기) — 끄면 문서 양식만 */
   tableFormats: false,
+  // ── 2026-10-29 고도화(수집·적재 → 가공·작성 → 공유·확인) — 새 화면은 켜 둔다 ──
+  /** 위쪽 줄 종(알림함) */
+  notifications: true,
+  /** AI 답·섹션 아래 👍/👎 */
+  feedback: true,
+  /** 대시보드 ▸ 시장(전사) */
+  market: true,
+  /** 대시보드 ▸ 데이터 현황(전사 — 수집·갱신 시점·대체 소스·품질) */
+  dataStatus: true,
+  /** 대시보드 ▸ 우리 워크스페이스(AI 가 고치고 본인이 승인) */
+  wsDashboard: true,
+  /** 드라이브 ▸ 수집 소스(공시·시계열·보도자료·폴더) */
+  sources: true,
+  /** AI 작업 ▸ 루틴(예약 작성) */
+  routines: true,
+  /** 검색·자료 가공 탭 */
+  searchStudio: true,
+  /** 홈 '오늘 확인할 것'(감시 가정 변화·받은 것·루틴 문서) */
+  todayCheck: true,
+  /** 문서 속 가정 감시(문서 머리 '가정'·본문 가정 줄·드라이브 '가정 표시') — 별도 메뉴 없음 */
+  assumptions: true,
+  /** 어시스턴트 — 문서 검수 ▸ 가이드라인 점검, 드라이브 '회의록 정리', 가정 서랍 '심의 준비', 하우스뷰 위젯 */
+  assistants: true,
+  /** 대시보드 ▸ 경제 일정(리서치 캘린더·일정표·발표 알림) */
+  calendar: true,
+  /** 관리 ▸ 품질·이용(관리자만) */
+  quality: true,
 } as const;

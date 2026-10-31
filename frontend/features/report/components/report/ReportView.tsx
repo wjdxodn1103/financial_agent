@@ -11,6 +11,7 @@ import { ArrowDown, ArrowUp, Check, History, PencilLine, Trash2, X } from "lucid
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { StepAssumptions } from "../../../assumptions/StepAssumptions";
 import { FEATURES } from "../../../workspace/features";
 import { canChatAtom, focusStepAtom, numberFocusAtom, numbersAtom, reportAtom, sessionAtom, versionsAtom } from "../../atoms";
 import type { NumberSpan } from "../../types";
@@ -58,6 +59,18 @@ export const ReportView = memo(function ReportView() {
     for (const s of numbers?.spans ?? []) out.set(s.b, [...(out.get(s.b) ?? []), s]);
     return out;
   }, [numbers]);
+  // 양식 2.0 — 섹션(요약)마다 사이드바 블록 자리(원래 순서 번호 — 숫자 표지 b 와 맞춘다)
+  const sidebarOf = useMemo(() => {
+    const out = new Map<string, number[]>();
+    blocks.forEach((b, i) => {
+      if ((b.kind === "table" || b.kind === "chart" || b.kind === "figure") && b.position === "sidebar" && b.step) out.set(b.step, [...(out.get(b.step) ?? []), i]);
+    });
+    return out;
+  }, [blocks]);
+  const theme = report?.theme;
+  const themeVars = (theme
+    ? { "--doc-accent": theme.accent ?? "#1F3A5F", "--doc-band": theme.bandFill ?? theme.accent ?? "#1F3A5F", "--doc-band-text": theme.bandText ?? "#fff", "--doc-side": theme.sidebarFill ?? "#F5F5F5", "--doc-caption": theme.captionColor ?? "#1F3A5F" }
+    : undefined) as React.CSSProperties | undefined;
 
   // 숫자 출처 탭에서 고른 숫자로 본문을 옮긴다
   useEffect(() => {
@@ -113,16 +126,33 @@ export const ReportView = memo(function ReportView() {
       </header>
 
       <div ref={containerRef} className="thin-scrollbar min-h-0 flex-1 overflow-y-auto bg-background-gray px-4 py-5">
-        <article className="mx-auto max-w-[46rem] rounded-xl border border-neutral-200 bg-white px-8 py-8">
-          <h1 className="text-xl leading-snug font-bold text-text-primary">{report?.title}</h1>
+        <article className="@container mx-auto max-w-[46rem] rounded-xl border border-neutral-200 bg-white px-8 py-8" style={themeVars}>
+          <h1 className="text-xl leading-snug font-bold text-text-primary" style={report?.theme?.accent ? { color: report.theme.accent } : undefined}>
+            {report?.title}
+          </h1>
           {report?.subtitle && <p className="mt-1.5 text-xs text-text-secondary">{report.subtitle}</p>}
 
           {blocks.map((b, i) => {
             const section = sections.find((s) => s.step === b.step);
             if (editing && b.step === editing.step && b.kind !== "heading") return null;
+            // 양식 2.0 요약 사이드바 블록은 요약 머리 바로 뒤 오른쪽 상자에서 그린다(원본 요약 쪽의 분홍 칸)
+            if ((b.kind === "table" || b.kind === "chart" || b.kind === "figure") && b.position === "sidebar") return null;
+            const side = b.kind === "heading" && b.role === "summary" ? sidebarOf.get(b.step) ?? [] : [];
             return (
               <div key={i} className="group">
                 <BlockView block={b} focused={b.step === focusStep} nums={spansByBlock.get(i) ?? []} activeKey={numberFocus?.key} />
+                {side.length > 0 && (
+                  // 원본처럼 오른쪽에 띄우되, 문서 칸이 좁으면(3단 화면) 위아래로 쌓는다 — 옆 본문·표와 사이드바 표가 서로 잘리지 않게. 사이드바 표는 촘촘하게(행 이름은 줄바꿈)
+                  <aside
+                    className="mt-3 mb-3 p-3 @lg:float-right @lg:ml-5 @lg:w-[40%] @lg:min-w-[236px] [&_table]:text-[11px] [&_td]:!px-1.5 [&_th]:!px-1.5 [&_td:first-child]:!whitespace-normal"
+                    style={{ background: "var(--doc-side, #F5F5F5)" }}
+                  >
+                    {side.map((j) => (
+                      <BlockView key={j} block={blocks[j]} focused={false} nums={spansByBlock.get(j) ?? []} activeKey={numberFocus?.key} />
+                    ))}
+                  </aside>
+                )}
+                {FEATURES.assumptions && session && b.step && blocks[i + 1]?.step !== b.step && <StepAssumptions docRef={session.id} step={b.step} title={report?.title ?? ""} />}
                 {b.kind === "heading" && section && (
                   <>
                     {renaming?.step === section.step ? (

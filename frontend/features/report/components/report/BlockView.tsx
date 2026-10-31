@@ -118,9 +118,49 @@ function FormInsert({ section }: { section: string }) {
 export function BlockView({ block, focused, nums = [], activeKey }: { block: ReportBlock; focused: boolean; nums?: NumberSpan[]; activeKey?: string }) {
   const actions = useReportActions();
   switch (block.kind) {
-    case "heading":
+    case "band":
+      // 양식 2.0 장 띠 — 테마 띠 색 칸에 흰 글자(원본 KIRS 처럼), 부록은 제목만
+      return block.band ? (
+        <div className="clear-both mt-10 mb-1">
+          <span className="inline-block px-5 py-1 text-[15px] font-bold" style={{ background: "var(--doc-band, #1F3A5F)", color: "var(--doc-band-text, #fff)" }}>
+            {block.text}
+          </span>
+        </div>
+      ) : (
+        <h2 className="clear-both mt-10 border-b-2 pb-1 text-base font-bold text-text-primary" style={{ borderColor: "var(--doc-accent, #1F3A5F)" }}>
+          {block.text}
+        </h2>
+      );
+    case "subhead":
+      // 양식 2.0 소주제 안 작은 제목('### …' 줄)
+      return <h4 className="mt-4 mb-1 text-[13px] font-bold text-text-primary">{block.text}</h4>;
+    case "figure":
       return (
-        <h2 data-step={block.step} className={cn("group mt-7 flex scroll-mt-4 items-baseline gap-2 border-b border-neutral-200 pb-1.5 text-base font-bold text-text-primary", focused && "text-primary")}>
+        <div className="my-2 rounded border border-dashed border-neutral-300 px-3 py-1.5 text-[11px] text-neutral-400" title="원본 양식의 그림 자리 — 자료를 넣으면 채울 수 있습니다">
+          {block.note ? "참고" : "그림 자리"} · {block.title}
+        </div>
+      );
+    case "heading":
+      if (block.depth === 2) {
+        // 양식 2.0 소제목 — 강조색·번호(원본의 번호 아이콘)
+        return (
+          <h3 data-step={block.step} className={cn("group clear-both mt-7 flex scroll-mt-4 items-baseline gap-2 text-[15px] font-bold", focused && "underline")} style={{ color: "var(--doc-accent, #1F3A5F)" }}>
+            {block.no != null && (
+              <span className="inline-flex size-[18px] shrink-0 items-center justify-center self-center text-[11px] text-white" style={{ background: "var(--doc-accent, #1F3A5F)" }}>
+                {block.no}
+              </span>
+            )}
+            <span className="min-w-0 flex-1">{block.text}</span>
+            {block.status === "written" && (
+              <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <FormInsert section={block.text} />
+              </span>
+            )}
+          </h3>
+        );
+      }
+      return (
+        <h2 data-step={block.step} className={cn("group clear-both mt-7 flex scroll-mt-4 items-baseline gap-2 border-b border-neutral-200 pb-1.5 text-base font-bold text-text-primary", focused && "text-primary")}>
           <span className="min-w-0 flex-1">{block.text}</span>
           {block.status === "written" && (
             <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -130,6 +170,22 @@ export function BlockView({ block, focused, nums = [], activeKey }: { block: Rep
         </h2>
       );
     case "para":
+      if (block.role === "claim") {
+        // 요약 주장 — 강조색 굵게(원본 요약 쪽의 빨간 주장 줄)
+        return (
+          <p data-step={block.step} className="mt-5 text-[14px] leading-6 font-bold" style={{ color: "var(--doc-accent, #1F3A5F)" }}>
+            <CitedText text={block.text} cites={block.cites} nums={nums.filter((n) => n.i === null)} step={block.step} activeKey={activeKey} />
+          </p>
+        );
+      }
+      if (block.role === "keyline") {
+        // 핵심 문장 — 본문 왼쪽 칸(원본의 굵은 요지 줄), 다음 문단이 오른쪽으로 흐른다
+        return (
+          <p data-step={block.step} className="float-left mt-2.5 mr-5 w-[27%] text-[12.5px] leading-6 font-bold whitespace-pre-wrap text-text-primary">
+            <CitedText text={block.text} cites={block.cites} nums={nums.filter((n) => n.i === null)} step={block.step} activeKey={activeKey} />
+          </p>
+        );
+      }
       return (
         <p data-step={block.step} className={cn("chat-prose mt-2.5 text-sm leading-7 whitespace-pre-wrap text-text-primary", focused && "-mx-3 rounded-lg bg-primary-soft px-3 py-1")}>
           <CitedText text={block.text} cites={block.cites} nums={nums.filter((n) => n.i === null)} step={block.step} activeKey={activeKey} />

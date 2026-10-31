@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from app.agent.progress import status_text
 from app.agent.session import Doc
 from app.docs.search_tool import doc_index_lines
-from app.formats.registry import block_spec, catalog, is_format, label, section_blocks_of
+from app.formats.registry import doc_block_spec, doc_catalog, has_blocks, label, section_blocks_of
 from app.records.service import notes_lines
 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
@@ -84,16 +84,27 @@ def chat_system(doc: Doc, modes: Optional[Dict[str, bool]] = None) -> str:
     docs = doc_index_lines(doc.get("documentIds") or [])
     more = f"\n… 외 {len(docs) - DOC_LINES_MAX}건" if len(docs) > DOC_LINES_MAX else ""
     parts.append("## 이 작업의 데이터\n" + (("\n".join(docs[:DOC_LINES_MAX]) + more) if docs else "없음 — 데이터 질문에는 드라이브에서 파일을 올리거나 이 작업에서 쓸 데이터를 켜 달라고 안내한다."))
-    if writing and is_format(doc.get("reportType")):
+    if writing and has_blocks(doc):
         lines = []
         for s in doc.get("sections") or []:
             ids = section_blocks_of(doc, s)
-            lines.append(f"- [{s['step']}] {s['title']}: " + (", ".join(label(block_spec(doc.get('reportType'), b)) for b in ids) if ids else "표·그림 없음"))
+            lines.append(f"- [{s['step']}] {s['title']}: " + (", ".join(label(doc_block_spec(doc, b)) for b in ids) if ids else "표·그림 없음"))
         parts.append(
-            "## 이 양식의 표·그림(섹션 뒤 고정 자리 — 숫자는 코드가 성과 데이터에서 채운다. 붙이기 add_block · 빼기 remove_block)\n"
+            "## 이 양식의 표·그림(섹션 뒤 고정 자리 — 숫자는 코드가 자료에서 채운다. 붙이기 add_block · 빼기 remove_block)\n"
             + "\n".join(lines)
-            + "\n양식 목록: " + ", ".join(f"{label(b)}[{b['id']}]" for b in catalog(doc.get("reportType")))
+            + "\n양식 목록: " + ", ".join(f"{label(b)}[{b['id']}]" for b in doc_catalog(doc))
         )
+        if doc.get("layout"):
+            # 양식 2.0 틀 문서 — 소제목은 회사마다 다른 주장 한 줄. 목차를 사용자와 정한다
+            parts.append(
+                "## 이 문서의 틀(문서 양식 2.0 — 장 아래 소주제 섹션)\n"
+                + "\n".join(f"- {p['title']}: " + ", ".join(f"[{s['step']}] {s['title']}" for s in doc.get("sections") or [] if s.get("part") == p["id"])
+                            for p in doc["layout"].get("parts") or [] if p.get("role") == "chapter")
+                + "\n- 지금 섹션 제목(기업 소개·주요 고객 등)은 양식의 '자리 이름'일 뿐이다. 소제목은 원본처럼 이 회사에 대한 주장 한 줄(25자 안팎, 예: '○○는 로봇용 정밀 부품 전문기업', '주력 제품 매출 비중 확대')로 바꾼다."
+                "\n- 사용자가 목차·소제목을 물으면 먼저 소주제 자리마다 따로 search_documents 를 불러 자료를 찾고(여러 자리를 한 질의에 묶지 않는다. kind 는 비워 표·본문을 함께 본다 — 매출 구성·지분은 대개 표에 있다), 장마다 소주제 자리별로 [주장 한 줄 소제목 | 다룰 내용 | 근거 자료] 를 제안한다. 자리 이름을 그대로 되풀이하지 않는다."
+                " 자료에 근거가 없는 자리는 소제목을 지어내지 말고 '자료 없음 — 필요한 자료: …' 로 둔다."
+                "\n- 사용자가 정하면 update_outline 으로 반영한다(rename = 소제목 바꾸기, add = 장에 소주제 더하기(part 에 장 제목), remove = 빼기). 장 자체는 바꾸지 않는다."
+            )
     notes = notes_lines(doc.get("teamNotes") or [])
     if notes:
         parts.append("## 팀 기록(워크스페이스 멤버가 확정한 결정·지시·방침 — 따른다. 사용자가 물으면 작성자·날짜와 원문을 그대로 알려 준다)\n" + "\n".join(notes[:12]))

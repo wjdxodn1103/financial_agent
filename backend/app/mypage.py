@@ -51,7 +51,10 @@ def my_page(session: Session, workspace_id: str, user: User) -> Dict[str, Any]:
 
     def request(t: Task, person: Optional[str]) -> Dict[str, Any]:
         rid = (t.source or {}).get("reportId")
-        return {"taskId": t.id, "reportId": rid, "title": title_of(rid), "person": names.get(person or "", ""), "done": t.status == "done", "at": iso(t.created_at), "updatedAt": iso(t.updated_at)}
+        r = reports.get(rid or "")
+        req = ((r.doc if r else None) or {}).get("reviewRequest") or {}
+        note = str(req.get("note") or "") if req.get("taskId") == t.id else ""  # 요청 메모(같은 검토 작업의 것만)
+        return {"taskId": t.id, "reportId": rid, "title": title_of(rid), "person": names.get(person or "", ""), "done": t.status == "done", "at": iso(t.created_at), "updatedAt": iso(t.updated_at), "note": note}
 
     asked = [t for t in tasks if _kind(t) == "report"]
     received = [request(t, t.created_by) for t in asked if t.assignee_id == user.id]

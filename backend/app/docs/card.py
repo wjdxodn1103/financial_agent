@@ -81,6 +81,21 @@ CARD_SYSTEM = """너는 금융 문서 서지 정리기다. 문서 앞부분을 �
 문서에 없는 정보는 지어내지 말고 빈 문자열로 둔다."""
 
 
+# 카드 정리가 돌려준 종류를 이 목록 값으로 맞춘다 — 위 DOC_TYPES(이름, 규칙) 의 이름 + 기타 문서(같은 이름으로 덮어쓰면 guess_doc_type 이 깨진다)
+DOC_TYPE_NAMES = tuple([name for name, _rx in DOC_TYPES] + ["기타 문서"])
+
+
+def _doc_type(v: str) -> str:
+    """목록 밖 값('반기보고서'·'보도자료')은 낱말이 겹치는 목록 값으로, 없으면 빈 값(기존 추정을 지킨다)."""
+    v = v.strip()
+    if v in DOC_TYPE_NAMES:
+        return v
+    for t in DOC_TYPE_NAMES:
+        if any(part and part in v for part in re.split(r"[·\s]+", t) if len(part) >= 2 and part not in ("자료", "문서")):
+            return t
+    return ""
+
+
 def _json_object(raw: str) -> Optional[Dict[str, Any]]:
     m = re.search(r"\{[\s\S]*\}", raw or "")
     if not m:
@@ -95,7 +110,7 @@ def _json_object(raw: str) -> Optional[Dict[str, Any]]:
 async def enrich_card(llm: Any, card: Dict[str, Any], file_name: str, front_text: str) -> Optional[Dict[str, Any]]:
     """LLM 으로 카드 정리 → 새 카드(실패하면 None). 빈 값은 기존 값을 지킨다."""
     user = f"파일명: {file_name}\n현재 제목 추정: {card.get('title') or ''}\n\n[문서 앞부분]\n{front_text[:4000]}"
-    params = ChatParams(messages=[{"role": "system", "content": CARD_SYSTEM}, {"role": "user", "content": user}], temperature=0.0, max_tokens=1200, reasoning_effort="low", timeout_s=120)
+    params = ChatParams(messages=[{"role": "system", "content": CARD_SYSTEM}, {"role": "user", "content": user}], temperature=0.0, max_tokens=1200, reasoning_effort="none", timeout_s=120)
     try:
         res = await llm.complete("chat", params)
     except Exception as e:  # noqa: BLE001
@@ -106,6 +121,8 @@ async def enrich_card(llm: Any, card: Dict[str, Any], file_name: str, front_text
         log.warning("[card] enrich returned no JSON: %r", (res.content or "")[:120])
         return None
     out = dict(card)
+    if isinstance(got.get("docType"), str):
+        got["docType"] = _doc_type(got["docType"])
     for k in ("title", "docType", "date", "issuer", "company", "oneLine"):
         v = got.get(k)
         if isinstance(v, str) and v.strip():

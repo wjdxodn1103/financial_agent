@@ -74,7 +74,7 @@ async def revise(view: Dict[str, Any], instruction: str, llm: Any) -> Tuple[Dict
     got = None
     for tokens in (6000, 9600):
         try:
-            res = await llm.complete("chat", ChatParams(messages=[{"role": "user", "content": content}], temperature=0.1, max_tokens=tokens, timeout_s=180, reasoning_effort="low"))
+            res = await llm.complete("chat", ChatParams(messages=[{"role": "user", "content": content}], temperature=0.1, max_tokens=tokens, timeout_s=180))
         except Exception:  # noqa: BLE001 — 한 번 더
             logger.exception("format revise failed")
             continue

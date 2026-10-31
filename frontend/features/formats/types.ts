@@ -1,4 +1,5 @@
 /** 문서 양식 메뉴 — BE app/templates_import/registry.py (format_views·create_format·update_format) · analyze.py(샘플 분석 제안) */
+import type { ChartBlock, FigureSlotBlock, TableBlock } from "../report/types";
 
 /** 섹션 뒤 자리 — 설명 자리(표·차트 이름과 구성 한 줄, 샘플 분석·화면에서 더함), 옛 표 양식 자리(templateId), builtin = 기본 양식의 고정 블록(이름만) */
 export interface FormatSlot {
@@ -48,6 +49,54 @@ export interface FormatAsset {
   look: { headerFill?: string; headerText?: string; rule?: string; lines?: "horizontal" | "grid" | "none"; numberAlign?: "right" | "center" | "left"; colors?: string[]; grid?: boolean; labels?: boolean; captionBold?: boolean; captionColor?: string };
 }
 
+/** 양식 2.0 틀(BE templates_import/blueprint.py) — 화면에 필요한 것만. 장(큰 제목) 아래 소주제(하위 카테고리), 소주제마다 표·차트 자리(blocks = 양식 id) */
+export interface BlueprintSubtopic {
+  title: string;
+  guide: string;
+  /** 샘플에서 이 자리의 소제목(참고) */
+  example?: string;
+  blocks: string[];
+  /** 샘플 소주제의 짜임(핵심·본문·작은 제목·표·그림 순서) — 화면은 고치지 않고 그대로 돌려준다 */
+  pattern?: string[];
+}
+
+export interface BlueprintPart {
+  id: string;
+  role: "cover" | "summary" | "chapter" | "appendix" | "disclaimer";
+  title: string;
+  guide?: string;
+  claims?: number;
+  blocks?: string[];
+  sidebar?: string[];
+  subtopics?: BlueprintSubtopic[];
+}
+
+export interface BlueprintForm {
+  id: string;
+  kind: "table" | "figure" | "note";
+  title: string;
+  position?: "main" | "sidebar";
+  page?: number | null;
+  bbox?: number[] | null;
+  chart?: { type: string } | null;
+  /** 샘플(원본) 제목 — title 은 회사 이름을 뺀 일반 제목('주요 제품 ①') */
+  sampleTitle?: string;
+}
+
+export interface Blueprint {
+  version: 2;
+  parts: BlueprintPart[];
+  forms: Record<string, BlueprintForm>;
+}
+
+/** 화면에서 고치는 장 — PATCH formats/{id} 의 outline */
+export interface OutlineChapter {
+  id?: string;
+  title: string;
+  guide: string;
+  subtopics: BlueprintSubtopic[];
+}
+
 export interface DocFormat {
   id: string;
   title: string;
@@ -68,6 +117,10 @@ export interface DocFormat {
   sections: FormatSection[];
   /** 표·차트 양식(샘플로 만든 양식) */
   assets?: FormatAsset[];
+  /** 양식 2.0 틀(샘플 PDF 글자층에서 뽑은 장·소주제·표 양식) — 있으면 화면은 틀을 고친다 */
+  blueprint?: Blueprint | null;
+  /** 틀의 표·차트 양식마다 샘플 값으로 채운 미리보기(문서 화면과 같은 블록) */
+  previews?: Record<string, TableBlock | ChartBlock | FigureSlotBlock>;
   updatedAt: string;
   /** 이 양식으로 쓴 문서 수(사내 = 전체, 워크스페이스 = 이 워크스페이스) */
   uses?: number;

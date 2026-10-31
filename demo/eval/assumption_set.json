@@ -1,0 +1,8 @@
+{
+  "note": "가정 판정 평가 세트(데모) — 숫자 가정을 기준일별로 코드가 판정해 기대 판정과 맞춘다. 자료 = 가상 Helios Data Systems 10-Q(demo/edgar_fixture).",
+  "cases": [
+    {"id": "as1", "target": {"name": "Helios Data Systems"}, "condition": {"ledgerMetric": "Data center revenue", "period": "latest_q_yoy", "op": ">=", "threshold": 30}, "asOf": "2026-09-30", "expect": "met"},
+    {"id": "as2", "target": {"name": "Helios Data Systems"}, "condition": {"ledgerMetric": "Data center revenue", "period": "latest_q_yoy", "op": ">=", "threshold": 30}, "asOf": null, "expect": "not_met"},
+    {"id": "as3", "target": {"name": "Helios Data Systems"}, "condition": {"ledgerMetric": "Data center revenue", "period": "latest_q_yoy", "op": ">=", "threshold": 20}, "asOf": null, "expect": "met"}
+  ]
+}

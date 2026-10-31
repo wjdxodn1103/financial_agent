@@ -16,12 +16,12 @@ from app.agent.events import Emit, ev
 from app.agent.ledger_brief import CALC_TOOL_NAME, CALC_TOOL_SCHEMA, LedgerBook, select_figures
 from app.agent.plan import PlanItem, queue_plan_item, remaining_plan
 from app.agent.progress import progress, status_text
-from app.agent.session import Doc, Section, find_by_title, find_section, written_sections
+from app.agent.session import Doc, Section, add_section, find_by_title, find_section, written_sections
 from app.agent.template import item_of, match_item, write_order
 from app.config import LIVE_CONNECTOR_TOOLS
 from app.docs.search_tool import SEARCH_TOOL_NAME, SEARCH_TOOL_SCHEMA, SourceBook, doc_index_lines, run_search
 from app.docs.store import doc_label, has_vectors, load_meta
-from app.formats.registry import block_spec, catalog, default_blocks, is_format, label, section_blocks_of
+from app.formats.registry import default_blocks, doc_block_spec, doc_catalog, has_blocks, label, section_blocks_of
 from app.records.service import scope_matches
 
 
@@ -69,6 +69,17 @@ TOOL_DEFS: List[Dict[str, Any]] = [
         },
     },
     {"type": "function", "function": {"name": "get_progress", "description": "리포트 섹션 목록([id]·작성 여부)과 진행, 다음 추천을 본다.", "parameters": {"type": "object", "properties": {}}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "read_section",
+            "description": "이 문서 섹션의 본문을 읽는다(문장 끝 [출처: 자료 이름 #문단]). '이 문서에 ~가 반영됐나'·'이 숫자 근거가 뭐야'처럼 쓴 문장을 짚어야 할 때.",
+            "parameters": {
+                "type": "object",
+                "properties": {"section_id": _str("섹션 id(get_progress 의 [id])"), "query": _str("섹션 id 를 모를 때 본문에서 찾을 말(예: '발표 시각', '22:30')")},
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -142,14 +153,15 @@ TOOL_DEFS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_outline",
-            "description": "원고 구성을 편집한다: rename(section_id, title) / remove(section_id) / move(section_id, after) / reorder(order=섹션 id 전체 순서).",
+            "description": "원고 구성을 편집한다: rename(section_id, title) / remove(section_id) / move(section_id, after) / reorder(order=섹션 id 전체 순서) / add(title, part=장 제목, after) — add 는 틀이 있는 문서의 장에 소주제를 더한다.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "op": {"type": "string", "enum": ["rename", "remove", "move", "reorder"]},
+                    "op": {"type": "string", "enum": ["rename", "remove", "move", "reorder", "add"]},
                     "section_id": _str("대상 섹션 id"),
-                    "title": _str("새 제목(rename)"),
-                    "after": _str("이 섹션 뒤로(move, 생략 시 맨 앞)"),
+                    "title": _str("새 제목(rename·add)"),
+                    "part": _str("장 제목(add)"),
+                    "after": _str("이 섹션 뒤로(move·add — 생략 시 move 는 맨 앞, add 는 그 장의 끝)"),
                     "order": {"type": "array", "items": {"type": "string"}, "description": "섹션 id 전체 순서(reorder)"},
                 },
                 "required": ["op"],
@@ -176,6 +188,9 @@ TOOL_DEFS: List[Dict[str, Any]] = [
 if not LIVE_CONNECTOR_TOOLS:
     # 외부 API 직접 가져오기는 끈다 — 데이터는 사내 공용 데이터로 미리 들어온다(config.LIVE_CONNECTOR_TOOLS 로 다시 켠다)
     TOOL_DEFS = [t for t in TOOL_DEFS if t["function"]["name"] != "fetch_dart"]
+from app.agent.proposals import PROPOSAL_TOOLS  # noqa: E402 — 대화로 등록(루틴·수집 소스) 확인 카드
+
+TOOL_DEFS += PROPOSAL_TOOLS
 TOOL_NAMES: List[str] = [t["function"]["name"] for t in TOOL_DEFS]
 _NULL_ID = re.compile(r"^(null|none|undefined|new|)$", re.I)
 
@@ -324,6 +339,39 @@ async def _get_progress(args: Dict[str, Any], ctx: ToolContext) -> str:
     return status_text(ctx.doc)
 
 
+async def _read_section(args: Dict[str, Any], ctx: ToolContext) -> str:
+    """섹션 본문 — 인용 표지([@문서#문단])를 [출처: 자료 이름 · 그 문단 제목] 으로 풀어 어느 문장이 어느 자료에 기대는지 보이게.
+    섹션 id·문단 번호는 내부 메모로만(답에 'p1'·섹션 id 가 새지 않게)."""
+    from app.docs.citations import TOKEN
+    from app.docs.store import paragraphs
+
+    sid, q = _arg(args.get("section_id")), _arg(args.get("query"))
+    secs = [s for s in ctx.doc.get("sections") or [] if s.get("content")]
+    if sid:
+        pick = [s for s in secs if s["step"] == sid]
+    elif q:
+        words = [w for w in re.split(r"\s+", q) if len(w) >= 2]
+        pick = [s for s in secs if any(w in f"{s.get('title', '')} {s.get('content') or ''}" for w in words)][:3]
+    else:
+        pick = secs[:2]
+    if not pick:
+        return "그 섹션을 찾지 못했다(아직 비어 있을 수 있다). get_progress 의 [id] 로 다시 부른다."
+    names: Dict[str, str] = {}
+    heads: Dict[str, Dict[str, str]] = {}
+
+    def src(m: "re.Match[str]") -> str:
+        d, c = m.group(1), m.group(2)
+        names.setdefault(d, doc_label(load_meta(d) or {}, d))
+        if d not in heads:
+            heads[d] = {str(p.get("id")): str(p.get("heading") or p.get("sheet") or "") for p in paragraphs(d)}
+        h = heads[d].get(c, "")
+        return f"[출처: {names[d]}{' · ' + h[:40] if h and h != names[d] else ''}]"
+
+    body = "\n\n".join(f"섹션 「{s['title']}」\n{TOKEN.sub(src, s.get('content') or '')[:2500]}" for s in pick)
+    ids = ", ".join(f"「{s['title']}」={s['step']}" for s in pick)
+    return body + f"\n[내부 메모] 본문을 사용자에게 다시 옮겨 적지 않는다 — 짚을 문장만 짧게 인용한다. 섹션은 제목으로 말한다(고칠 때 쓸 id: {ids} — 사용자에게 id 를 말하지 않는다)."
+
+
 async def _set_report_meta(args: Dict[str, Any], ctx: ToolContext) -> str:
     setup = ctx.doc.setdefault("setup", {})
     changed = []
@@ -343,9 +391,13 @@ def _resolve_section(doc: Doc, args: Dict[str, Any]) -> tuple[Optional[Section],
     raw_id = _arg(args.get("section_id"))
     title = _arg(args.get("title"))
     sec = find_section(doc, raw_id) if raw_id and not _NULL_ID.match(raw_id) else None
-    # 모델이 다른 섹션의 id 를 재사용하는 일이 있다 — 제목이 다르면 그 id 를 믿지 않는다
+    # 모델이 다른 섹션의 id 를 재사용하는 일이 있다 — 제목이 다르면 그 id 를 믿지 않는다.
+    # 단 틀 문서의 아직 안 쓴 소주제 자리는 id 를 믿고 제목을 주장 한 줄로 바꾼다(소제목은 쓰면서 정한다 — 안 그러면 자리 밖 끝에 새 섹션이 생겼다, 2026-10-30 실측)
     if sec is not None and title and title != sec["title"].strip():
-        sec = None
+        if doc.get("layout") and sec.get("role") == "subsection" and sec.get("status") != "written":
+            sec["title"] = title
+        else:
+            sec = None
     if sec is None and title:
         sec = find_by_title(doc, title)
     if sec is not None:
@@ -485,6 +537,19 @@ async def _update_outline(args: Dict[str, Any], ctx: ToolContext) -> str:
         by = {s["step"]: s for s in sections}
         doc["sections"] = [by[x] for x in order if x in by] + [s for s in sections if s["step"] not in order]
         msg = "순서를 바꿨습니다."
+    elif op == "add" and doc.get("layout") and _arg(args.get("title")):
+        # 틀 문서 — 장(part) 아래 소주제 섹션. 자리 = 지정한 섹션 뒤, 없으면 그 장의 끝(장이 비었으면 앞 장들의 끝)
+        chapters = [p for p in doc["layout"].get("parts") or [] if p.get("role") == "chapter"]
+        want = _arg(args.get("part")).replace(" ", "")
+        part = next((p for p in chapters if want and (want == p["id"] or want in p["title"].replace(" ", ""))), None)
+        if part is None:
+            return "그런 장이 없습니다. 장: " + ", ".join(p["title"] for p in chapters)
+        before = {p["id"] for p in chapters[: chapters.index(part) + 1]}
+        after = _arg(args.get("after")) or next((s["step"] for s in reversed(sections) if s.get("part") == part["id"]), "") \
+            or next((s["step"] for s in reversed(sections) if s.get("part") in before), "")
+        node = add_section(doc, _arg(args.get("title")), [], after=after or None)
+        node.update({"part": part["id"], "role": "subsection", "depth": 2, "blocks": []})
+        msg = f"'{part['title']}' 장에 '{node['title']}' 소주제를 더했습니다."
     else:
         return "op/인자가 잘못됐습니다. get_progress 의 [id] 를 쓰세요."
     ctx.emit(ev("outline_update", sections=doc["sections"]))
@@ -498,17 +563,16 @@ _BLOCK_NO = re.compile(r"(표|그림|table|chart|figure)\s*(\d+)", re.I)
 
 def _find_block(doc: Doc, ref: str) -> Optional[Dict[str, Any]]:
     """'<표 4>'·'그림 2'·블록 id·제목 일부 → 블록 정의."""
-    type_id = doc.get("reportType")
     ref = (ref or "").strip()
-    spec = block_spec(type_id, ref)
+    spec = doc_block_spec(doc, ref)
     if spec:
         return spec
     m = _BLOCK_NO.search(ref)
     if m:
         kind = "table" if m.group(1).lower() in ("표", "table") else "chart"
-        return next((b for b in catalog(type_id) if b["kind"] == kind and b["no"] == int(m.group(2))), None)
+        return next((b for b in doc_catalog(doc) if b["kind"] == kind and b.get("no") == int(m.group(2))), None)
     low = ref.lower().replace(" ", "")
-    return next((b for b in catalog(type_id) if low and low in b["title"].replace(" ", "").lower()), None)
+    return next((b for b in doc_catalog(doc) if low and low in (b.get("title") or "").replace(" ", "").lower()), None)
 
 
 def _block_section(doc: Doc, args: Dict[str, Any], spec: Dict[str, Any], *, holding: bool) -> Optional[Section]:
@@ -523,12 +587,12 @@ def _block_section(doc: Doc, args: Dict[str, Any], spec: Dict[str, Any], *, hold
 
 
 def _catalog_text(doc: Doc) -> str:
-    return ", ".join(f"{label(b)}[{b['id']}]" for b in catalog(doc.get("reportType")))
+    return ", ".join(f"{label(b)}[{b['id']}]" for b in doc_catalog(doc))
 
 
 async def _add_block(args: Dict[str, Any], ctx: ToolContext) -> str:
     doc = ctx.doc
-    if not is_format(doc.get("reportType")):
+    if not has_blocks(doc):
         return "이 리포트는 고정 양식이 아니라 붙일 표·그림 목록이 없습니다."
     spec = _find_block(doc, _arg(args.get("block")))
     if spec is None:
@@ -541,12 +605,12 @@ async def _add_block(args: Dict[str, Any], ctx: ToolContext) -> str:
         return f"{label(spec)} 은(는) 이미 '{sec['title']}' 섹션 뒤에 있습니다."
     sec["blocks"] = [*current, spec["id"]]
     ctx.emit(ev("outline_update", sections=doc["sections"]))
-    return f"'{sec['title']}' 섹션 뒤에 {label(spec)} 을(를) 붙였습니다(숫자는 데이터 칸에서 채움). 사용자에게 한 문장으로 알린다."
+    return f"'{sec['title']}' 섹션 뒤에 {label(spec)} 을(를) 붙였습니다(양식 그대로, 숫자는 자료에서 채움). 사용자에게 한 문장으로 알린다."
 
 
 async def _remove_block(args: Dict[str, Any], ctx: ToolContext) -> str:
     doc = ctx.doc
-    if not is_format(doc.get("reportType")):
+    if not has_blocks(doc):
         return "이 리포트는 고정 양식이 아니라 뺄 표·그림이 없습니다."
     spec = _find_block(doc, _arg(args.get("block")))
     if spec is None:
@@ -583,13 +647,23 @@ async def _use_format(args: Dict[str, Any], ctx: ToolContext) -> str:
     return f"'{hit['title']}' 양식을 붙였다 — 섹션 {len(doc['sections'])}개: {names}\n[내부 메모] 붙였다고 한 문장으로 알린다. 사용자가 쓸 섹션을 말했으면 이어서 write_section, 아니면 어디부터 쓸지 한 번 묻는다."
 
 
+async def _proposal(name: str, args: Dict[str, Any], ctx: ToolContext) -> str:
+    from app.agent.proposals import run
+
+    return await run(name, args, ctx.doc, ctx.emit)
+
+
 _HANDLERS: Dict[str, Callable[[Dict[str, Any], ToolContext], Awaitable[str]]] = {
+    "propose_routine": lambda a, c: _proposal("propose_routine", a, c),
+    "propose_source": lambda a, c: _proposal("propose_source", a, c),
+    "propose_event_alert": lambda a, c: _proposal("propose_event_alert", a, c),
     SEARCH_TOOL_NAME: _search,
     "list_documents": _list_documents,
     "lookup_figures": _lookup_figures,
     CALC_TOOL_NAME: _calculate,
     "fetch_dart": _fetch_dart,
     "get_progress": _get_progress,
+    "read_section": _read_section,
     "use_format": _use_format,
     "set_report_meta": _set_report_meta,
     "write_section": _write_section,

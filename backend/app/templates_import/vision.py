@@ -93,7 +93,7 @@ async def read_figure(llm: Any, png: bytes, caption: str) -> Optional[Dict[str, 
     """→ {type, horizontal, categories, series, unit} | None."""
     msg = [{"role": "user", "content": [{"type": "text", "text": PROMPT + (f"\n그림 캡션: {caption}" if caption else "")}, {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(png).decode()}}]}]
     try:
-        res = await llm.complete("chat", ChatParams(messages=msg, temperature=0.1, max_tokens=2500, timeout_s=120, reasoning_effort="low"))
+        res = await llm.complete("chat", ChatParams(messages=msg, temperature=0.1, max_tokens=2500, timeout_s=120))
     except Exception:  # noqa: BLE001 — VL 이 안 되면 그 그림은 자리로만
         logger.exception("figure read failed")
         return None

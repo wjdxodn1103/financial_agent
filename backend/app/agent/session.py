@@ -48,9 +48,21 @@ def new_doc(session_id: str, report_type: str, title: str = "") -> Doc:
 
 def seed_sections(doc: Doc) -> None:
     """유형의 항목을 빈 섹션으로 깐다(OP 템플릿 시드와 같은 생각 — 리포트 뷰에 목차와 '작성' 버튼이 바로 보인다)."""
-    # 등록 양식(rt:)은 섹션 뒤 표·차트 자리(slots)도 깐다 — fill_slots 가 채운다
+    import copy
+
+    from app.agent.template import report_type
+
+    # 양식 2.0 틀 — 문서에 복사해 둔다(양식을 고쳐도 이미 만든 문서는 그대로). 장 띠·부록·테마·표 양식은 doc["layout"] 에서 그린다
+    bp = report_type(doc.get("reportType")).get("blueprint")
+    if bp:
+        doc["layout"] = copy.deepcopy(bp)
+    else:
+        doc.pop("layout", None)
+    # 등록 양식(rt:)은 섹션 뒤 표·차트 자리(slots)도 깐다 — fill_slots 가 채운다. 틀이 있으면 part·role·depth·blocks(묶인 표·그림 자리)
     doc["sections"] = [
-        {"step": new_section_id(), "title": it["title"], "status": "empty", "covers": [it["id"]], **({"slots": it["slots"]} if it.get("slots") else {})} for it in items_of(doc.get("reportType"))
+        {"step": new_section_id(), "title": it["title"], "status": "empty", "covers": [it["id"]], **({"slots": it["slots"]} if it.get("slots") else {}),
+         **{k: copy.deepcopy(it[k]) for k in ("part", "role", "depth", "blocks") if k in it}}
+        for it in items_of(doc.get("reportType"))
     ]
 
 
@@ -136,6 +148,21 @@ def set_section(doc: Doc, step: str, content: Optional[str], evidence: Optional[
         if evidence is not None:
             doc.setdefault("evidence", {})[step] = evidence
     return sec
+
+
+def mark_ai_draft(doc: Doc, step: str, content: str) -> None:
+    """AI 가 쓴 그대로를 섹션에 남긴다 — 사람이 얼마나 고쳤는지(품질 지표 '사용자 수정률')를 나중에 본다.
+    근거 고정(앵커)도 여기서 — 인용 토큰·숫자의 원문 위치·글자·값을 저장 시점에 얼려 둔다."""
+    sec = find_section(doc, step)
+    if sec is None:
+        return
+    sec["aiDraft"] = {"text": content, "at": now_iso()}
+    try:
+        from app.anchors import pin_section
+
+        pin_section(doc, sec)
+    except ImportError:
+        pass
 
 
 VERSION_MAX = 20

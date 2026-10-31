@@ -27,6 +27,10 @@ def _font(run, size: float, bold: bool = False, color: RGBColor | None = None) -
 
 
 def build_docx(doc: Doc) -> Tuple[bytes, str]:
+    if doc.get("layout"):
+        from app.report.blueprint_export import build_blueprint_docx  # 양식 2.0 틀 — 원본 샘플의 쪽 모양(띠·소제목·핵심|본문·표 양식·부록)
+
+        return build_blueprint_docx(doc)
     if is_format(doc.get("reportType")):
         from app.report.format_export import build_format_docx  # 고정 양식 — 표·그림까지 든 양식 스타일 DOCX
 
@@ -47,6 +51,8 @@ def build_docx(doc: Doc) -> Tuple[bytes, str]:
             _font(d.add_paragraph().add_run(b["text"]), 13, bold=True, color=RGBColor(0x1D, 0x35, 0x57))
         elif b["kind"] == "para":
             _font(d.add_paragraph().add_run(b["text"]), 10.5)
+        elif b["kind"] == "subhead":
+            _font(d.add_paragraph().add_run(b["text"]), 10.5, bold=True)
         elif b["kind"] == "list":
             for it in b["items"]:
                 _font(d.add_paragraph(style="List Bullet").add_run(it["text"]), 10.5)

@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-ASSET_MAX = 30
+ASSET_MAX = 60  # 기업분석 샘플(KIRS 27쪽)은 표·그림이 약 40개
 CHART_TYPES = ("line", "bar", "barh", "area", "pie", "combo", "band", "other")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _AID = re.compile(r"^a\d{1,3}$")

@@ -10,7 +10,7 @@ import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { ApiError } from "../../../report/api";
-import { getMyPage, sendReviewRequests, updateMyTask } from "../../api";
+import { approveDoc, getMyPage, sendReviewRequests } from "../../api";
 import { useWorkspace } from "../../context";
 import type { MyPage } from "../../types";
 
@@ -150,6 +150,7 @@ export function RequestsView() {
                     <span className={cn("block truncate text-[15px] font-medium", r.done ? "text-neutral-500" : "text-text-primary")}>{r.title}</span>
                     <span className="block truncate text-[13px] text-neutral-500">
                       {r.person} · {ago(r.at)}
+                      {r.note ? ` · “${r.note}”` : ""}
                     </span>
                   </span>
                 </button>
@@ -158,10 +159,12 @@ export function RequestsView() {
                 ) : tab === "in" ? (
                   <button
                     type="button"
+                    // 문서 화면의 [검토 완료]와 같다 — 문서 승인 + 검토 작업 끝 + 작성자에게 알림
                     onClick={() =>
-                      void updateMyTask(ws.workspaceId, r.taskId, { done: true })
+                      void approveDoc(r.reportId)
+                        .then(() => getMyPage(ws.workspaceId))
                         .then(setPage)
-                        .catch(() => toast.error("바꾸지 못했습니다.", { position: "top-center" }))
+                        .catch(() => toast.error("검토를 마치지 못했습니다.", { position: "top-center" }))
                     }
                     className="shrink-0 cursor-pointer rounded-lg bg-neutral-100 px-3 py-1.5 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-200"
                   >

@@ -15,6 +15,8 @@ import type {
   Ledger,
   LibraryEntry,
   MyPage,
+  NotificationItem,
+  ShareItem,
   RecordsPayload,
   Review,
   SearchResult,
@@ -71,6 +73,8 @@ export const listConnectors = async (id: string) => (await req<{ connectors: Con
 export const searchDartCompanies = async (id: string, q: string) => (await req<{ companies: DartCompany[] }>(`${wid(id)}/connectors/dart/companies?q=${encodeURIComponent(q)}`)).companies ?? [];
 export const fetchDartFinancials = (id: string, body: { corpCode: string; corpName: string; year: number; report: string; fs: string }) =>
   req<{ document: DocumentCard | null; figures: number; title: string }>(`${wid(id)}/connectors/dart/financials`, jsonInit("POST", body));
+export const fetchDartBusiness = (id: string, body: { corpCode: string; corpName: string; year: number; report: string }) =>
+  req<{ document: DocumentCard | null; paragraphs: number; title: string }>(`${wid(id)}/connectors/dart/business`, jsonInit("POST", body));
 export const searchEdgarCompanies = async (id: string, q: string) => (await req<{ companies: EdgarCompany[] }>(`${wid(id)}/connectors/edgar/companies?q=${encodeURIComponent(q)}`)).companies ?? [];
 export const fetchEdgarFinancials = (id: string, body: { cik: number; name: string; year: number }) =>
   req<{ document: DocumentCard | null; figures: number; title: string }>(`${wid(id)}/connectors/edgar/financials`, jsonInit("POST", body));
@@ -108,3 +112,18 @@ export const getMyPage = (id: string) => req<MyPage>(`${wid(id)}/me`);
 export const addMyTodo = (id: string, title: string, due = "", start = "") => req<MyPage>(`${wid(id)}/me/todos`, jsonInit("POST", { title, due, start }));
 export const updateMyTask = (id: string, taskId: string, body: { done?: boolean; due?: string; start?: string; title?: string }) => req<MyPage>(`${wid(id)}/me/tasks/${taskId}`, jsonInit("PATCH", body));
 export const deleteMyTodo = (id: string, taskId: string) => req<MyPage>(`${wid(id)}/me/todos/${taskId}`, { method: "DELETE" });
+
+// ── 알림함·피드백(2026-10-29) ──
+export const getNotificationCount = async () => (await req<{ unread: number }>("/api/notifications/count")).unread ?? 0;
+export const listNotifications = (unreadOnly = false) => req<{ items: NotificationItem[]; unread: number }>(`/api/notifications?unread=${unreadOnly ? 1 : 0}&limit=30`);
+export const readNotifications = (ids: string[] | "all") =>
+  req<{ read: number; unread: number }>("/api/notifications/read", jsonInit("POST", ids === "all" ? { all: true } : { ids }));
+export const giveFeedback = (body: { workspaceId: string; targetKind: "answer" | "section" | "brief" | "doc"; targetId: string; thumbs: number }) =>
+  req<{ targetId: string; thumbs: number }>("/api/feedback", jsonInit("POST", body));
+export const getMyFeedback = async (kind: string, ids: string[]) =>
+  ids.length ? (await req<{ thumbs: Record<string, number> }>(`/api/feedback?kind=${kind}&ids=${encodeURIComponent(ids.join(","))}`)).thumbs ?? {} : {};
+
+// ── 보내기·승인 ──
+export const sendItem = (w: string, body: { itemKind: "doc" | "data" | "table"; itemId: string; to: string[]; message: string; review: boolean }) => req<ShareItem>(`${wid(w)}/shares`, jsonInit("POST", body));
+export const listReceived = async (w: string) => (await req<{ shares: ShareItem[] }>(`${wid(w)}/shares/received`)).shares ?? [];
+export const approveDoc = (sessionId: string, note = "") => req<{ approval: { status: string } }>(`/api/sessions/${encodeURIComponent(sessionId)}/approve`, jsonInit("POST", { note }));

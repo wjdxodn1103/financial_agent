@@ -74,6 +74,8 @@ export interface Meta {
   roles: { id: Role; label: string }[];
   users: UserInfo[];
   connectors: { dart: boolean; edgar: boolean; ecos: boolean };
+  /** 관리자 id(BE config.ADMIN_USER_IDS) — 관리 ▸ 품질·이용 */
+  admins?: string[];
 }
 
 // ─── 세션 ───
@@ -148,6 +150,10 @@ export interface PublicSession {
   lastWrittenStep?: string | null;
   /** AI 작업 — 오른쪽 '결과'에서 마지막으로 본 표 */
   currentTableId?: string | null;
+  /** 문서 상태(공유·확인) — draft(AI 초안)·review(검토 중)·approved(승인) */
+  approval?: { status: "draft" | "review" | "approved"; label?: string; by?: string; at?: string; note?: string; reviewerId?: string } | null;
+  /** 루틴이 쓴 문서 */
+  origin?: { routine?: string; runId?: string; asOf?: string | null } | null;
 }
 
 export interface SessionListItem {
@@ -179,12 +185,52 @@ export interface CitationSpan {
 }
 
 export type ReportBlock =
-  | { kind: "heading"; step: string; text: string; status: "written" | "empty" }
-  | { kind: "para"; step: string; text: string; cites: CitationSpan[] }
+  /** depth·no·role — 양식 2.0 틀 문서의 소제목(장 안 번호)·요약 */
+  | { kind: "heading"; step: string; text: string; status: "written" | "empty"; depth?: number; no?: number | null; role?: string }
+  /** role — claim = 요약 주장('[제목]' 줄), keyline = 핵심 문장 묶음('[핵심]' 줄 — 왼쪽 칸) */
+  | { kind: "para"; step: string; text: string; cites: CitationSpan[]; role?: "claim" | "keyline" }
   | { kind: "list"; step: string; items: { text: string; cites: CitationSpan[] }[] }
+  /** 양식 2.0 소주제 안 작은 제목(본문 '### …' 줄) */
+  | { kind: "subhead"; step: string; text: string }
   | { kind: "empty"; step: string; title: string; desc: string; slots?: { kind: "table" | "chart" | "figure"; title: string }[] }
+  | BandBlock
+  | FigureSlotBlock
   | TableBlock
   | ChartBlock;
+
+/** 양식 2.0 틀 문서의 장 띠(band 거짓 = 부록처럼 제목만) — BE report/view.py */
+export interface BandBlock {
+  kind: "band";
+  step?: undefined;
+  part: string;
+  no: number | null;
+  text: string;
+  band: boolean;
+  role: string;
+}
+
+/** 양식 2.0 틀의 그림 자리(1차 — 제목만, Word 에는 넣지 않는다) */
+export interface FigureSlotBlock {
+  kind: "figure";
+  step?: string;
+  blockId: string;
+  title: string;
+  position?: "main" | "sidebar";
+  placeholder?: boolean;
+  note?: boolean;
+}
+
+/** 양식 2.0 틀의 테마(BE templates_import/blueprint.py theme) — 문서 화면이 CSS 변수로 쓴다 */
+export interface ReportTheme {
+  accent?: string | null;
+  bandFill?: string | null;
+  bandText?: string | null;
+  sidebarFill?: string | null;
+  captionColor?: string | null;
+  captionSize?: number | null;
+  bodySize?: number | null;
+  headlineSize?: number | null;
+}
 
 /** 고정 양식 블록 공통(BE app/formats/blocks.py) — 숫자는 코드가 데이터 워크북에서 옮긴다 */
 interface FormatBlockBase {
@@ -211,6 +257,13 @@ interface FormatBlockBase {
   /** 문서 양식의 표·차트 양식으로 만든 것(BE research/forms.py) — 겉모양과 양식 이름 */
   look?: FormLook;
   formName?: string;
+  /** 양식 2.0 표 — 원본 제목 줄 오른쪽 '(단위: 억원, %)' 그대로 */
+  unitNote?: string;
+  /** 양식 2.0 표 아래 '주:' 줄(양식 화면 미리보기 — 샘플 글) */
+  noteLines?: string[];
+  /** 양식 2.0 틀에 묶인 표(BE research/form_rows.py) — 자리(요약 사이드바)·양식 id */
+  position?: "main" | "sidebar";
+  formId?: string;
 }
 
 /** 문서 양식의 표·차트 양식 겉모양(BE templates_import/forms.py look) */
@@ -218,13 +271,29 @@ export interface FormLook {
   headerFill?: string;
   headerText?: string;
   rule?: string;
-  lines?: "horizontal" | "grid" | "none";
+  /** groups = 원본처럼 묶음 사이(rowRules)에만 가로줄, frame = 위·아래 선만 */
+  lines?: "horizontal" | "grid" | "none" | "groups" | "frame";
   numberAlign?: "right" | "center" | "left";
   colors?: string[];
   grid?: boolean;
   labels?: boolean;
+  /** 누적 막대(계열을 한 막대에 쌓는다 — 원본 차트 모양) */
+  stacked?: boolean;
   captionBold?: boolean;
   captionColor?: string;
+  /** 양식 2.0 표(원본 PDF 에서 읽은 모양) — 위 규칙선 색, 열 글자색(F 열 강조), 줄무늬 열, 줄무늬 색 */
+  topRule?: string | null;
+  topRuleWidth?: number | null;
+  /** 머리 아래 선·표 아래 선·몸통 묶음 선(i = i 번째 몸통 행 아래) */
+  headRule?: string | null;
+  headRuleWidth?: number | null;
+  bottomRule?: string | null;
+  rowRules?: number[];
+  columnColors?: (string | null)[];
+  stripeColumns?: number[];
+  stripeColor?: string | null;
+  /** 열마다 바탕색(값 열 j — 실적 열 회색·예상 열 연분홍) */
+  columnFills?: (string | null)[];
 }
 
 /** 문서 화면의 '표·차트 넣기' 목록 — 이 문서 양식의 표·차트 양식(BE report/view.py forms) */
@@ -250,6 +319,12 @@ export interface TableCell {
   /** 툴팁 — 출처·계산식·빈 칸 이유 */
   title?: string;
   kind?: "number" | "text" | "calc" | "empty" | "head";
+  /** 행 이름 칸(양식 2.0 표) — 들여쓰기 단계·굵게·묶음 머리 */
+  indent?: number;
+  bold?: boolean;
+  group?: boolean;
+  /** 강조 행(원본 대상 기업 행 빨강) — 행 이름 칸에만 오고 행 전체 글자색 */
+  color?: string;
 }
 
 export interface TableBlock extends FormatBlockBase {
@@ -324,6 +399,9 @@ export interface ReportView {
   stats: { sections: number; written: number; chars: number; citations: number; documents: number; required: number; requiredCovered: number };
   /** 이 문서 양식의 표·차트 양식(샘플로 만든 양식만) */
   forms?: ReportForm[];
+  /** 양식 2.0 틀 문서 — 테마(색)와 부분 목록 */
+  theme?: ReportTheme;
+  layout?: { parts: { id: string; role: string; title: string }[]; page: Record<string, unknown> };
 }
 
 // ─── 검토 준비 (BE app/report/readiness.py) ───
@@ -530,6 +608,8 @@ export interface DocChunk {
   rows?: string[][];
   /** XLSX 시트 이름 */
   sheet?: string;
+  /** 표 단위(연결 스냅샷 — '원'·'백만원') */
+  unit?: string;
 }
 
 export interface ChunksPage {
@@ -547,6 +627,8 @@ export interface ChunkContext {
   prev: DocChunk | null;
   next: DocChunk | null;
   total: number;
+  /** 인용 문장(quote)을 주고 받았을 때 — 문장 속 금액·비율과 같은 표 칸(r = 머리글 포함 행 번호, as = 문장 속 표기) */
+  hits?: { r: number; c: number; as: string }[];
 }
 
 export interface SessionPayload {
@@ -666,6 +748,8 @@ export interface ChatMessage {
   tables?: { id: string; title: string }[];
   /** AI 가 찾아서 연 문서(R)·데이터 파일(F) — 여는 버튼 */
   links?: ItemLink[];
+  /** 대화로 등록 — 루틴·수집 소스 확인 카드(사람이 [등록]해야 저장) */
+  proposals?: Proposal[];
   /** 양식 샘플 카드 — 표·차트 하나씩 + 리포트 양식 */
   imports?: ImportBox;
   /** 사용자 메시지에 붙은 파일 이름(양식 샘플) */
@@ -754,7 +838,42 @@ export type StreamEvent =
   | { type: "table_update"; table: import("../research/types").ResearchTable }
   | { type: "template_saved"; template: import("../research/types").ResearchTemplate }
   | { type: "item_link"; item: ItemLink }
+  | { type: "proposal"; proposal: Proposal }
   | { type: "import_item"; importId: string; item: ImportCard }
   | { type: "import_format"; importId: string; format: ImportFormat }
   | { type: "error"; message: string; code?: string }
   | { type: "done" };
+
+/** 대화로 등록 확인 카드 — BE app/agent/proposals.py */
+export type Proposal =
+  | {
+      kind: "routine";
+      name: string;
+      formatId: string | null;
+      formatTitle: string;
+      instruction: string;
+      schedule: { every: "daily" | "weekdays" | "weekly" | "hourly" | "manual"; times: string[]; weekday?: number };
+      folderName: string;
+      notifyAll: boolean;
+      sessionId?: string;
+    }
+  | {
+      kind: "source";
+      sourceKind: "edgar" | "series" | "rss";
+      name: string;
+      schedule: { every: "daily" | "weekdays" | "weekly" | "hourly" | "manual"; times: string[]; weekday?: number };
+      companies?: { cik: number; ticker: string; name: string }[];
+      missing?: string[];
+      seriesIds?: string[];
+      feeds?: { url: string; issuer: string }[];
+    }
+  | {
+      /** 경제 일정 알림(대화로 등록) — BE agent/proposals._event_alert */
+      kind: "event_alert";
+      items: { eventId: string | null; indicatorId: string | null; name: string; event?: import("../calendar/api").MarketEventView }[];
+      repeat: boolean;
+      notifyAll: boolean;
+      workspace: boolean;
+      range: [string, string];
+      missing: string[];
+    };

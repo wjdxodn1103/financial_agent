@@ -9,6 +9,7 @@ python-dotenv==1.1.0
 PyMuPDF==1.26.7
 python-docx==1.2.0
 openpyxl==3.1.5
+yfinance==1.7.0  # 종목 일봉(Yahoo, 키 없음 — app/market/prices.py). pandas 를 함께 깐다
 tzdata==2026.5  # Windows 에는 IANA 시간대 DB 가 없다(기록 비서 퇴근 시각)
 numpy==1.26.4
 qdrant-client==1.20.0  # 벡터 저장소 — 기본 로컬 모드(data/qdrant), QDRANT_URL 이면 서버

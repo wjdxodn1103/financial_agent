@@ -78,7 +78,8 @@ export interface ReportActions {
   draft: (text: string) => void;
   openSection: (step: string) => void;
   /** cell = 표 칸(행·열) — 양식 표의 칸을 누르면 원본 데이터 칸을 강조 */
-  openDocument: (docId: string, chunk?: string, cell?: [number, number] | null) => void;
+  /** quote = 그 문단을 인용한 문장(근거 카드) — 원문 창이 문장 속 금액과 같은 칸을 칠한다 */
+  openDocument: (docId: string, chunk?: string, cell?: [number, number] | null, quote?: string | null) => void;
   openCitation: (step: string, sentence: string) => void;
   toggleReport: () => void;
   toggleRightPanel: () => void;
@@ -316,12 +317,12 @@ export function ReportStudioProvider({ sessionId, initialTableId = null, childre
           break;
         case "tool_start": {
           const tool: ToolRun = { id: e.id, name: e.name, args: e.args, status: "running" };
-          store.set(statusStageAtom, `tool:${e.name}`);
+          store.set(statusStageAtom, `tool:${e.name}${e.args?.query ? `|“${String(e.args.query).slice(0, 60)}”` : ""}`);
           patchMessage(msgId, (m) => ({ ...m, tools: [...(m.tools ?? []), tool] }));
           break;
         }
         case "tool_end":
-          store.set(statusStageAtom, "think");
+          store.set(statusStageAtom, e.summary ? `think|${String(e.summary).slice(0, 80)}` : "think");
           patchMessage(msgId, (m) => ({ ...m, tools: (m.tools ?? []).map((x) => (x.id === e.id ? { ...x, status: e.status, summary: e.summary } : x)) }));
           break;
         case "section_update": {
@@ -358,6 +359,9 @@ export function ReportStudioProvider({ sessionId, initialTableId = null, childre
           break;
         case "import_format":
           patchMessage(msgId, (m) => ({ ...m, imports: { id: e.importId, items: m.imports?.items ?? [], format: e.format } }));
+          break;
+        case "proposal":
+          patchMessage(msgId, (m) => ({ ...m, proposals: [...(m.proposals ?? []), e.proposal] }));
           break;
         case "item_link":
           patchMessage(msgId, (m) => ({ ...m, links: [...(m.links ?? []), e.item] }));
@@ -694,10 +698,10 @@ export function ReportStudioProvider({ sessionId, initialTableId = null, childre
         store.set(panelsAtom, (p) => ({ ...p, reportOpen: true }));
         store.set(focusStepAtom, step);
       },
-      openDocument: (docId, chunk, cell) => {
+      openDocument: (docId, chunk, cell, quote) => {
         // 위치가 있는 것(표 칸·인용·답 속 출처) = 원문 확인 창(원본 파일 그대로), 자료 자체 = 문서 보기 탭(탭을 끈 동안은 이것도 원문 확인 창)
         if (chunk || !FEATURES.panelTabs) {
-          store.set(sourceCheckAtom, { docId, chunk, cell: cell ?? null, tick: Date.now() });
+          store.set(sourceCheckAtom, { docId, chunk, cell: cell ?? null, quote: quote ?? null, tick: Date.now() });
           return;
         }
         store.set(viewingDocAtom, (v) => ({ docId, chunk, cell: cell ?? null, tick: (v?.tick ?? 0) + 1 }));

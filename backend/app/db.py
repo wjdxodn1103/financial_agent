@@ -8,17 +8,28 @@
 """
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, Iterator, List, Optional
 
 from fastapi import Depends
-from sqlalchemy import Column
+from sqlalchemy import Column, event
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.types import JSON
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from app.config import DB_PATH
 
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False, "timeout": 30}, pool_size=5, max_overflow=10)
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
+    # 예약 작업(수집·루틴)과 화면 요청이 같이 쓴다 — WAL 이면 읽기가 쓰기를 기다리지 않는다
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.close()
 
 
 def utcnow() -> datetime:
@@ -31,6 +42,12 @@ def iso(dt: Optional[datetime]) -> Optional[str]:
 
 def _json(default: Any) -> Any:
     return Field(default_factory=lambda: type(default)(default), sa_column=Column(JSON))
+
+
+def set_json(row: Any, field: str, value: Any) -> None:
+    """JSON 열에 새 값을 넣는다 — 제자리에서 고친 dict 도 변경으로 잡히게 복사해 대입하고 표시한다."""
+    setattr(row, field, copy.deepcopy(value))
+    flag_modified(row, field)
 
 
 # ── 사람·워크스페이스 ───────────────────────────────────────────────────
@@ -362,6 +379,383 @@ class ReportTemplate(SQLModel, table=True):
     spec: Dict[str, Any] = _json({})
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+# ── 알림·활동·피드백(2026-10-29) ───────────────────────────────────────
+
+class Notification(SQLModel, table=True):
+    """알림함 — 받는 사람마다 한 줄. link = 화면 이동({v, s, t, w}), ref = 무엇에 대한 알림인지.
+    dedupe_key 가 같은 알림은 같은 사람에게 다시 만들지 않는다(같은 판정·같은 실행이 여러 번 알리지 않게)."""
+
+    __tablename__ = "notification"
+
+    id: str = Field(primary_key=True)
+    user_id: str = Field(index=True)
+    workspace_id: str = Field(default="", index=True)
+    kind: str = "system"  # routine | share | review | assumption | source | dashboard | system
+    title: str = ""
+    body: str = ""
+    link: Dict[str, Any] = _json({})
+    ref: Dict[str, Any] = _json({})
+    dedupe_key: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    read_at: Optional[datetime] = None
+
+
+class ActivityEvent(SQLModel, table=True):
+    """이용 기록 — 품질·이용 지표(생성 시간·이용 현황)의 원자료. 본문은 남기지 않는다."""
+
+    __tablename__ = "activity_event"
+
+    id: str = Field(primary_key=True)
+    at: datetime = Field(default_factory=utcnow, index=True)
+    user_id: str = Field(default="", index=True)
+    workspace_id: str = Field(default="", index=True)
+    kind: str = Field(index=True)  # turn | section_written | doc_created | export | search | routine_run | source_run …
+    ref: Dict[str, Any] = _json({})
+    meta: Dict[str, Any] = _json({})  # {sec, chars, feature …}
+
+
+class Feedback(SQLModel, table=True):
+    """👍/👎 — 사람·대상마다 하나(다시 누르면 바뀐다). target_kind = answer | section | brief | doc."""
+
+    __tablename__ = "feedback"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(default="", index=True)
+    user_id: str = Field(index=True)
+    target_kind: str
+    target_id: str = Field(index=True)
+    thumbs: int = 0  # +1 | -1 | 0(취소)
+    score: Optional[int] = None
+    comment: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# ── 수집·적재 파이프라인·시장 데이터(2026-10-29) ─────────────────────────
+
+class DataSource(SQLModel, table=True):
+    """수집 소스 — 사내 공용(scope=company, 관리자)·워크스페이스(편집자 이상). 모은 것은 보통 문서가 되어 AI 검색·작성·원문 창에 그대로 쓰인다.
+    kind = edgar(공시) | series(시장·거시 시계열) | rss(공식 보도자료·성명) | folder(서버 수집 폴더 — 사내 자료공유시스템 연계 자리).
+    schedule = {every: daily|weekdays|hourly|weekly|manual, times: ["06:30"], weekday: 0~6}."""
+
+    __tablename__ = "data_source"
+
+    id: str = Field(primary_key=True)
+    scope: str = "workspace"  # company | workspace
+    workspace_id: str = Field(default="", index=True)  # company 는 ""
+    kind: str
+    name: str = ""
+    params: Dict[str, Any] = _json({})
+    schedule: Dict[str, Any] = _json({})
+    target: Dict[str, Any] = _json({})  # {folderId}
+    enabled: bool = True
+    created_by: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    last_run_at: Optional[datetime] = None
+    status: str = ""  # ok | error | partial | 빈 값(아직)
+
+
+class SourceRun(SQLModel, table=True):
+    __tablename__ = "source_run"
+
+    id: str = Field(primary_key=True)
+    source_id: str = Field(index=True)
+    trigger: str = "schedule"  # schedule | manual | replay | retry
+    as_of: Optional[str] = None
+    status: str = "running"  # running | ok | partial | error | skipped
+    new: int = 0
+    skipped: int = 0
+    failed: int = 0
+    note: str = ""
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: Optional[datetime] = None
+
+
+class SourceItem(SQLModel, table=True):
+    """수집한 항목 하나(공시 한 건·보도자료 한 건·파일 하나·시리즈 갱신 하루). key 는 소스 안에서 유일 — 같은 것을 두 번 적재하지 않는다."""
+
+    __tablename__ = "source_item"
+
+    id: str = Field(primary_key=True)
+    source_id: str = Field(index=True)
+    key: str = Field(index=True)
+    doc_id: Optional[str] = None
+    title: str = ""
+    url: str = ""
+    published_at: Optional[str] = None
+    fetched_at: datetime = Field(default_factory=utcnow)
+    status: str = "ok"  # ok | error
+    error: Optional[str] = None
+    retries: int = 0
+    meta: Dict[str, Any] = _json({})
+
+
+class MarketObservation(SQLModel, table=True):
+    """시계열 관측값 — (시리즈, 날짜, 공급자, 빈티지)마다 한 줄. 공급자를 섞지 않고 저장해 대조·대체 소스 표시에 쓴다."""
+
+    __tablename__ = "market_observation"
+
+    id: str = Field(primary_key=True)  # series|date|source|vintage
+    series_id: str = Field(index=True)
+    date: str = Field(index=True)  # YYYY-MM-DD
+    source: str = Field(index=True)  # fred | treasury | ecb | nyfed | demo …
+    vintage: str = ""  # ALFRED 빈티지(날짜 지정 재현) — 보통 ""
+    value: float
+    fetched_at: datetime = Field(default_factory=utcnow)
+
+
+class MarketStatus(SQLModel, table=True):
+    __tablename__ = "market_status"
+
+    series_id: str = Field(primary_key=True)
+    provider_in_use: str = ""
+    fallback: bool = False
+    last_ok_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    last_date: Optional[str] = None
+    providers: Dict[str, Any] = _json({})  # {공급자: {status ok|error|nokey, error, at, rows}}
+
+
+class PriceBar(SQLModel, table=True):
+    """종목 일봉 — (종목, 날짜, 공급자)마다 한 줄. 사내 공용(app/market/prices.py)."""
+
+    __tablename__ = "price_bar"
+
+    id: str = Field(primary_key=True)  # ticker|date|source
+    ticker: str = Field(index=True)  # Yahoo 표기(389500.KQ · 005930.KS · AAPL)
+    date: str = Field(index=True)  # YYYY-MM-DD(거래소 현지 날짜)
+    source: str = "yahoo"
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: float
+    adj_close: Optional[float] = None
+    volume: Optional[float] = None
+    currency: str = ""
+    fetched_at: datetime = Field(default_factory=utcnow)
+
+
+class DataIssue(SQLModel, table=True):
+    """데이터 품질 문제 — 결측·이상치·공급자 간 불일치·기준일 지남·단위/주기·문서 숫자 불일치·수집 실패. key 가 같으면 한 줄(해소되면 resolved_at)."""
+
+    __tablename__ = "data_issue"
+
+    id: str = Field(primary_key=True)
+    key: str = Field(index=True)
+    scope: str = "company"
+    workspace_id: str = Field(default="", index=True)
+    kind: str  # missing | outlier | disagree | stale | unit | doc_mismatch | ingest_failed
+    series_id: Optional[str] = None
+    doc_id: Optional[str] = None
+    source_id: Optional[str] = None
+    detail: Dict[str, Any] = _json({})
+    detected_at: datetime = Field(default_factory=utcnow)
+    resolved_at: Optional[datetime] = None
+
+
+# ── 공유·확인(2026-10-29) ─────────────────────────────────────────────
+
+class Share(SQLModel, table=True):
+    """보내기 — 드라이브의 문서·데이터·정리한 데이터를 멤버에게(메시지·검토 요청과 함께). 받는 사람은 알림함·홈 '받은 것'에서 연다."""
+
+    __tablename__ = "share"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(index=True)
+    item_kind: str  # doc | data | table
+    item_id: str
+    title: str = ""
+    from_user: str = ""
+    to_users: List[str] = _json([])
+    message: str = ""
+    review: bool = False
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+# ── 대시보드(2026-10-29) ───────────────────────────────────────────────
+
+class DashboardSpec(SQLModel, table=True):
+    """대시보드 위젯 구성 — kind = market(전사 시장)|data(전사 데이터 현황)|workspace(워크스페이스 맞춤).
+    status = active(지금 쓰는 것)|draft(AI 가 낸 제안 — 제안한 사람이 미리보기 후 승인·버리기)|archived(예전 것)."""
+
+    __tablename__ = "dashboard_spec"
+
+    id: str = Field(primary_key=True)
+    scope: str = "company"  # company | workspace
+    workspace_id: str = Field(default="", index=True)
+    kind: str = Field(index=True)
+    status: str = Field(default="active", index=True)
+    spec: Dict[str, Any] = _json({})
+    prompt: str = ""
+    summary: str = ""
+    base_id: Optional[str] = None
+    created_by: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class MarketBrief(SQLModel, table=True):
+    """오늘의 시장 요약 — 사실표(코드가 계산)와 그것을 [F#]로 가리키는 요약·AI 판단 문장. 사실표에 없는 숫자가 든 문장은 뺀다(dropped)."""
+
+    __tablename__ = "market_brief"
+
+    date: str = Field(primary_key=True)
+    summary: List[str] = _json([])
+    judgement: List[str] = _json([])
+    facts: List[Dict[str, Any]] = _json([])
+    dropped: List[str] = _json([])
+    model: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+# ── 루틴(예약 작성, 2026-10-29) ────────────────────────────────────────
+
+class Routine(SQLModel, table=True):
+    """반복 작성 업무 — 양식·데이터 범위·지시·일정·올릴 폴더·받는 사람·검토 담당. 만든 사람 이름으로 화면 없이 쓰고(AI 초안) 알린다.
+    schedule = {every: daily|weekdays|weekly|manual, time: "07:00", weekday}. call = 대화창 '/' 호출 문구."""
+
+    __tablename__ = "routine"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(index=True)
+    name: str = ""
+    call: str = ""
+    format_id: str = ""
+    data_scope: Dict[str, Any] = _json({})
+    instruction: str = ""
+    schedule: Dict[str, Any] = _json({})
+    folder_id: Optional[str] = None
+    title_pattern: str = "{name} {date}"
+    recipients: Dict[str, Any] = _json({})  # {all: bool, userIds: []}
+    reviewer_id: Optional[str] = None
+    owner_id: str = ""
+    enabled: bool = True
+    source: Dict[str, Any] = _json({})  # {kind: chat|task|manual, sessionId}
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    last_run_at: Optional[datetime] = None
+
+
+class RoutineRun(SQLModel, table=True):
+    __tablename__ = "routine_run"
+
+    id: str = Field(primary_key=True)
+    routine_id: str = Field(index=True)
+    workspace_id: str = Field(default="", index=True)
+    trigger: str = "schedule"  # schedule | manual | replay
+    as_of: Optional[str] = None
+    status: str = "running"  # running | ok | partial | error
+    report_id: Optional[str] = None
+    written: int = 0
+    llm_calls: int = 0
+    note: str = ""
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: Optional[datetime] = None
+
+
+# ── 가정 감시(문서 속, 2026-10-29) ────────────────────────────────────
+
+class Assumption(SQLModel, table=True):
+    """문서 속 가정 문장 — 투자 결정이 기댄 가정('데이터센터 매출이 연 30% 넘게 성장'). 별도 메뉴 없이 그 문서·알림·홈에서 보인다.
+    doc_kind = report(AI 작업 문서) | data(올린 자료). condition = 숫자 가정의 조건(코드 판정). anchor = 그 문장의 원문 위치, basis = 당시 근거."""
+
+    __tablename__ = "assumption"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(index=True)
+    doc_kind: str = "report"
+    doc_ref: str = Field(index=True)
+    step: Optional[str] = None
+    quote: str = ""
+    anchor: Dict[str, Any] = _json({})
+    target: Dict[str, Any] = _json({})  # {name, ticker}
+    kind: str = "numeric"  # numeric | qualitative
+    condition: Dict[str, Any] = _json({})  # {metric, period: latest_q_yoy|latest_q|latest_fy|latest_fy_yoy, op, threshold, unit}
+    basis: List[Dict[str, Any]] = _json([])
+    watch: bool = False
+    status: str = "candidate"  # candidate | watching | dismissed
+    latest: Dict[str, Any] = _json({})  # {result, value, at, changed, acknowledged}
+    created_by: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    role: Optional[str] = None  # None = 가정(맞아야 하는 전망) | trigger = 재심의 조건(그렇게 되면 다시 심의) — 판정 낱말이 도달·미도달
+    watched_by: Optional[str] = None  # 감시를 켠 사람(알림 받는 사람 = 문서 만든 사람 + 이 사람)
+
+
+class AssumptionCheck(SQLModel, table=True):
+    """판정 이력(덧붙이기만) — 언제·어떤 자료로·어떤 결과·지금 값·근거 앵커."""
+
+    __tablename__ = "assumption_check"
+
+    id: str = Field(primary_key=True)
+    assumption_id: str = Field(index=True)
+    at: datetime = Field(default_factory=utcnow)
+    as_of: Optional[str] = None
+    trigger: Dict[str, Any] = _json({})
+    result: str = ""  # met | not_met | no_data | support | refute | hold
+    value: Dict[str, Any] = _json({})
+    anchors: List[Dict[str, Any]] = _json([])
+    quote: str = ""
+    prev_result: Optional[str] = None
+    changed: bool = False
+
+
+class MarketEvent(SQLModel, table=True):
+    """경제 일정 — 지표 발표·중앙은행 회의·휴장·만기. 출처: FRED 발표일·공식 일정표·규칙(만기). 전사 공용(워크스페이스 없음).
+    발표되면 실제치를 코드가 기록한다(감지 출처·관측 기간·받은 시각을 detect 에 고정). 예상치는 사람이 넣는다(무료 공식 출처 없음)."""
+
+    __tablename__ = "market_event"
+
+    id: str = Field(primary_key=True)
+    key: str = Field(index=True, unique=True)  # 지표id:날짜 · fixed:이름:날짜 · rule:이름:날짜
+    country: str = "US"  # KR | US | EU | CN | JP
+    category: str = "release"  # release(발표) | meeting(회의) | issue(이슈) | industry(산업) | earnings(실적) | holiday(휴장)
+    importance: int = 2  # 1~3
+    indicator_id: Optional[str] = Field(default=None, index=True)
+    title: str = ""
+    period: str = ""  # 대상 기간 '2026년 10월'
+    period_key: str = ""  # 감지 기준 '2026-10' · '2026Q3' · 회의는 결정일
+    at: datetime = Field(index=True)  # 예정 시각(UTC)
+    time_known: bool = True
+    tz: str = ""  # 현지 시간대(표시용)
+    unit: str = ""
+    decimals: int = 1
+    previous: Optional[float] = None
+    forecast: Optional[float] = None
+    forecast_by: Optional[str] = None
+    actual: Optional[float] = None
+    actual_text: str = ""  # 회의 결정('동결' 등)
+    released_at: Optional[datetime] = None
+    status: str = "scheduled"  # scheduled | released
+    source: str = ""  # fred | fixed | rule
+    confirmed: bool = True  # 공식 일정으로 확인(아니면 '공식 확인 전')
+    source_url: str = ""
+    detect: Dict[str, Any] = _json({})  # 감지 기록 {via, url, obs, fetchedAt, polls, lastPollAt}
+    meta: Dict[str, Any] = _json({})
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class EventAlert(SQLModel, table=True):
+    """일정 알림 등록 — 일정 하나(event_id) 또는 지표의 다음 발표마다(indicator_id + repeat). 발표가 감지되면 코드가 양식대로 만든 메시지를 보낸다(AI 없음).
+    recipients = {all: 워크스페이스 전원, users: [id]}, channels = {inbox, workspace(채널 메시지), webhook}."""
+
+    __tablename__ = "event_alert"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(index=True)
+    user_id: str = ""
+    event_id: Optional[str] = Field(default=None, index=True)
+    indicator_id: Optional[str] = Field(default=None, index=True)
+    repeat: bool = False
+    recipients: Dict[str, Any] = _json({})
+    channels: Dict[str, Any] = _json({})
+    enabled: bool = True
+    source: Dict[str, Any] = _json({})  # {kind: chat|ui, sessionId}
+    last_sent_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 def init_db() -> None:

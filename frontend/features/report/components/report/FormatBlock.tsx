@@ -20,10 +20,16 @@ const TOTAL = /합계|총변동|^기금 가치$|투자 포트폴리오 시장가
 export type OpenSource = (docId: string, chunk?: string, cell?: [number, number] | null) => void;
 
 function Caption({ block }: { block: TableBlock | ChartBlock }) {
+  // 양식 2.0 표는 원본 제목 색(look.captionColor — KIRS 회색), 그 밖은 남색
+  const color = block.formId ? block.look?.captionColor || "var(--doc-caption, #1F3A5F)" : undefined;
   return (
-    <p className="mt-5 mb-1.5 text-[13px] font-bold text-[#1F3A5F]">
+    <p className={cn("mt-5 mb-1.5 text-[13px] font-bold", !color && "text-[#1F3A5F]")} style={color ? { color } : undefined}>
       {block.label || block.caption || block.title}
-      {block.unit && <span className="ml-1 font-normal text-text-secondary">(단위: {block.unit})</span>}
+      {block.unitNote ? (
+        <span className="float-right text-[11px] font-normal text-text-secondary">(단위: {block.unitNote})</span>
+      ) : (
+        block.unit && <span className="ml-1 font-normal text-text-secondary">(단위: {block.unit})</span>
+      )}
     </p>
   );
 }
@@ -31,7 +37,17 @@ function Caption({ block }: { block: TableBlock | ChartBlock }) {
 function Source({ block, onOpen }: { block: TableBlock | ChartBlock; onOpen?: OpenSource }) {
   const actions = useMaybeReportActions();
   const open = onOpen ?? actions?.openDocument;
-  if (block.sourceLine) return <p className="mt-1 text-[11px] text-text-secondary">{block.sourceLine}</p>;
+  if (block.sourceLine)
+    return (
+      <>
+        {block.noteLines?.map((n, i) => (
+          <p key={i} className="mt-1 text-[11px] text-text-secondary">
+            {n}
+          </p>
+        ))}
+        <p className="mt-1 text-[11px] text-text-secondary">{block.sourceLine}</p>
+      </>
+    );
   if (!block.docId || !open) return null;
   return (
     <button type="button" onClick={() => open(block.docId!, block.chunk)} className="mt-1 block cursor-pointer text-left text-[11px] text-text-secondary hover:text-primary hover:underline" title="원본 데이터 보기">
@@ -42,6 +58,10 @@ function Source({ block, onOpen }: { block: TableBlock | ChartBlock; onOpen?: Op
 }
 
 function Missing({ block }: { block: TableBlock | ChartBlock }) {
+  if (block.formId) {
+    // 양식 2.0 표 — 행·열은 양식 그대로 두고 칸이 모두 비었다(이 데이터 범위에 맞는 자료가 없다)
+    return <div className="rounded-lg border border-dashed border-neutral-300 px-3 py-2.5 text-xs text-text-secondary">이 표에 맞는 자료가 아직 없습니다.</div>;
+  }
   return (
     <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/60 px-3 py-2.5 text-xs text-amber-900">
       데이터 없음 — 성과 데이터 엑셀에 시트 <b>{block.sheet}</b> 를 올리면 채워집니다.
@@ -49,14 +69,35 @@ function Missing({ block }: { block: TableBlock | ChartBlock }) {
   );
 }
 
-/** 칸 하나 — 원장 칸·인용 문단으로 이어진 칸은 눌러서 원문을 연다 */
-function Cell({ cell, col, docId, open }: { cell: TableCell; col: number; docId?: string; open?: OpenSource }) {
+/** 칸 하나 — 원장 칸·인용 문단으로 이어진 칸은 눌러서 원문을 연다. style = 양식 2.0 열 모양(F 열 글자색·줄무늬 바탕) */
+function Cell({ cell, col, docId, open, style }: { cell: TableCell; col: number; docId?: string; open?: OpenSource; style?: React.CSSProperties }) {
   const target = cell.docId ?? docId;
   const align = cell.num ? "text-right" : "text-left";
+  if (col === 0 && cell.kind === "head" && (cell.indent || cell.bold || cell.group)) {
+    // 양식 2.0 행 이름 — 들여쓰기·굵게(원본 재무표 꼴)
+    return (
+      <td className={cn("px-2.5 py-1 text-left whitespace-nowrap text-text-primary", (cell.bold || cell.group) && "font-semibold")} style={{ ...(cell.indent ? { paddingLeft: `${0.625 + cell.indent * 0.9}rem` } : {}), ...style }}>
+        {cell.text}
+      </td>
+    );
+  }
   if (cell.kind === "empty" || (!cell.text && col > 0)) {
     return (
-      <td className={cn("px-2.5 py-1 text-neutral-300", align)} title={cell.title}>
+      <td className={cn("px-2.5 py-1 text-neutral-300", align)} title={cell.title} style={style}>
         –
+      </td>
+    );
+  }
+  if (style && col > 0) {
+    return (
+      <td className={cn("px-2.5 py-1 whitespace-nowrap", align)} style={style} title={cell.title}>
+        {(cell.fid || cell.kind === "number") && cell.chunk && target && open ? (
+          <button type="button" title={cell.title || "원본 데이터 칸 보기"} onClick={() => open(target, cell.chunk, cell.cell)} className="cursor-pointer rounded px-0.5 hover:bg-primary-soft hover:text-primary">
+            {cell.text}
+          </button>
+        ) : (
+          cell.text
+        )}
       </td>
     );
   }
@@ -82,7 +123,7 @@ function Cell({ cell, col, docId, open }: { cell: TableCell; col: number; docId?
     );
   }
   return (
-    <td className={cn("px-2.5 py-1", col === 0 ? "text-left whitespace-nowrap text-text-primary" : align, cell.num && "whitespace-nowrap")} title={cell.title}>
+    <td className={cn("px-2.5 py-1", col === 0 ? "text-left whitespace-nowrap text-text-primary" : align, cell.num && "whitespace-nowrap")} title={cell.title} style={style}>
       {cell.text}
     </td>
   );
@@ -92,14 +133,16 @@ function Cell({ cell, col, docId, open }: { cell: TableCell; col: number; docId?
 function FormHead({ block }: { block: TableBlock }) {
   const look = block.look ?? {};
   const style = { background: look.headerFill ?? NAVY, color: look.headerText ?? (look.headerFill ? "#111827" : "#fff") };
-  const line = look.lines === "grid" ? "border border-neutral-200" : "border-b border-neutral-200";
+  const line = look.lines === "grid" ? "border border-neutral-200" : look.headRule ? "" : "border-b border-neutral-200";
+  // 양식 2.0 — 머리 아래 선(원본 색·굵기)·열마다 바탕(머리 칸도 원본처럼 같은 열 바탕)
+  const under: React.CSSProperties | undefined = look.headRule ? { borderBottom: `${Math.max(1, (look.headRuleWidth ?? 0.5) * 1.4)}px solid ${look.headRule}` } : undefined;
   const groups = block.headGroups ?? [];
   if (!groups.length) {
     return (
       <thead>
         <tr style={style}>
           {block.header.map((h, i) => (
-            <th key={i} className={cn("px-2.5 py-1.5 font-semibold whitespace-nowrap", line, i === 0 ? "text-left" : "text-center")}>
+            <th key={i} className={cn("px-2.5 py-1.5 font-semibold whitespace-nowrap", line, i === 0 ? "text-left" : "text-center")} style={{ ...under, ...(i > 0 && look.columnFills?.[i - 1] ? { background: look.columnFills[i - 1]! } : {}) }}>
               {h}
             </th>
           ))}
@@ -157,7 +200,10 @@ export function TableBlockView({ block, onOpen, caption = true }: { block: Table
         <Missing block={block} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-[12px] tabular-nums" style={look ? { borderTop: `2px solid ${look.rule ?? NAVY}`, borderBottom: `1.5px solid ${look.rule ?? NAVY}` } : undefined}>
+          <table
+            className="w-full border-collapse text-[12px] tabular-nums"
+            style={look ? { borderTop: `${look.topRuleWidth ? Math.max(1, look.topRuleWidth * 1.4) : 2}px solid ${look.topRule ?? look.rule ?? NAVY}`, borderBottom: `1.5px solid ${look.bottomRule ?? look.rule ?? NAVY}` } : undefined}
+          >
             {look ? (
               <FormHead block={block} />
             ) : (
@@ -173,11 +219,20 @@ export function TableBlockView({ block, onOpen, caption = true }: { block: Table
             )}
             <tbody>
               {block.rows.map((row, r) => {
-                const total = TOTAL.test(row[0]?.text ?? "");
+                const total = !block.formId && TOTAL.test(row[0]?.text ?? "");
+                // 양식 2.0 — 원본 자리(묶음 사이)에만 가로줄, 위·아래 선만인 표는 행 줄 없음
+                const groupsOnly = block.formId && (look?.lines === "groups" || look?.lines === "frame" || look?.lines === "none");
+                const ruled = groupsOnly && look?.rowRules?.includes(r);
+                // 강조 행 — 행 이름 칸의 색을 행 전체 글자에(굵은 행이면 값도 굵게)
+                const rc = block.formId ? row[0]?.color : undefined;
+                const rowStyle = (c: number): React.CSSProperties | undefined => {
+                  const base = block.formId && c > 0 ? colStyle(look, c - 1) : undefined;
+                  return rc ? { ...base, color: rc, ...(row[0]?.bold ? { fontWeight: 600 } : {}) } : base;
+                };
                 return (
-                  <tr key={r} className={cn("border-b border-neutral-200", total && "bg-[#EEF2F7] font-semibold")}>
+                  <tr key={r} className={cn(!groupsOnly && "border-b border-neutral-200", total && "bg-[#EEF2F7] font-semibold")} style={ruled ? { borderBottom: `1px solid ${look?.rule ?? "#7F7F7F"}` } : undefined}>
                     {row.map((cell, c) => (
-                      <Cell key={c} cell={cell} col={c} docId={block.docId} open={open} />
+                      <Cell key={c} cell={cell} col={c} docId={block.docId} open={open} style={rowStyle(c)} />
                     ))}
                   </tr>
                 );
@@ -189,6 +244,14 @@ export function TableBlockView({ block, onOpen, caption = true }: { block: Table
       <Source block={block} onOpen={onOpen} />
     </figure>
   );
+}
+
+/** 양식 2.0 표의 열 모양 — 원본 열 글자색(F 열 빨강)·줄무늬 열 바탕 */
+function colStyle(look: TableBlock["look"], j: number): React.CSSProperties | undefined {
+  if (!look) return undefined;
+  const color = look.columnColors?.[j] ?? undefined;
+  const stripe = look.columnFills?.[j] ?? (look.stripeColumns?.includes(j) ? look.stripeColor ?? undefined : undefined);
+  return color || stripe ? { color, background: stripe } : undefined;
 }
 
 function fmt(v: number, pattern: string): string {
@@ -212,6 +275,14 @@ function ticks(min: number, max: number): number[] {
 
 function shortLabel(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+/** 진한 색인가('#C00000' 같은 막대 위 값 글자는 흰색 — 누적 막대 조각) */
+function dark(hex: string): boolean {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 140;
 }
 
 function Legend({ block, colorOf }: { block: ChartBlock; colorOf: (j: number) => string }) {
@@ -438,7 +509,11 @@ export function ChartBlockView({ block, onOpen, caption = true }: { block: Chart
   const pointOf = (j: number, i: number): ChartPoint | null => block.points?.[j]?.[i] ?? null;
   const openPoint = (p: ChartPoint | null) => (p?.docId && p.chunk && open ? () => open(p.docId!, p.chunk, p.cell ?? null) : undefined);
   const tip = (s: string, cat: string, v: number, p: ChartPoint | null) => p?.title || `${s} · ${cat} · ${fmt(v, block.number)}`;
-  const values = block.series.flatMap((s) => s.values.filter((v): v is number => v != null));
+  // 누적 막대 — 눈금은 범주마다 쌓은 합까지
+  const stacked = !!block.look?.stacked && !block.horizontal && !(block.chartType && FORM_CHARTS.has(block.chartType));
+  const values = stacked
+    ? block.categories.map((_, i) => block.series.reduce((a, s) => a + Math.max(0, s.values[i] ?? 0), 0))
+    : block.series.flatMap((s) => s.values.filter((v): v is number => v != null));
   const tk = ticks(Math.min(...values, 0), Math.max(...values, 0));
   const lo = tk[0];
   const hi = tk[tk.length - 1];
@@ -568,7 +643,7 @@ export function ChartBlockView({ block, onOpen, caption = true }: { block: Chart
     const bottom = 40;
     const y = (v: number) => top + (1 - (v - lo) / (hi - lo || 1)) * (H - top - bottom);
     const slot = (W - left - 8) / n;
-    const barW = Math.min(46, (slot * 0.7) / k);
+    const barW = stacked ? Math.min(46, slot * 0.6) : Math.min(46, (slot * 0.7) / k);
     body = (
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={block.title}>
         {tk.map((t) => (
@@ -581,27 +656,35 @@ export function ChartBlockView({ block, onOpen, caption = true }: { block: Chart
         ))}
         {block.categories.map((cat, i) => {
           const cx = left + slot * i + slot / 2;
+          let acc = 0;
           return (
             <g key={cat}>
               {block.series.map((s, j) => {
                 const v = s.values[i];
                 if (v == null) return null;
-                const bx = cx - (barW * k) / 2 + j * barW;
-                const y0 = y(Math.max(0, v));
-                const h = Math.abs(y(v) - y(0));
+                const base = stacked ? acc : 0;
+                if (stacked) acc += Math.max(0, v);
+                const bx = stacked ? cx - barW / 2 : cx - (barW * k) / 2 + j * barW;
+                const y0 = y(Math.max(0, v) + base);
+                const h = Math.abs(y(v + base) - y(base));
                 const click = openPoint(pointOf(j, i));
                 return (
                   <g key={s.name} onClick={click} className={cn(click && "cursor-pointer hover:opacity-80")}>
                     <title>{tip(s.name, cat, v, pointOf(j, i))}</title>
                     <rect x={bx} y={y0} width={barW - 2} height={Math.max(h, 0.5)} fill={colorOf(j)} />
                     {showVals && (
-                      <text x={bx + (barW - 2) / 2} y={v >= 0 ? y(v) - 4 : y(v) + 11} textAnchor="middle" fontSize="10" fill="#374151">
+                      <text x={bx + (barW - 2) / 2} y={stacked ? y0 + h / 2 + 3.5 : v >= 0 ? y(v) - 4 : y(v) + 11} textAnchor="middle" fontSize="10" fill={stacked && dark(colorOf(j)) ? "#fff" : "#374151"}>
                         {fmt(v, block.number)}
                       </text>
                     )}
                   </g>
                 );
               })}
+              {stacked && showVals && acc > 0 && (
+                <text x={cx - 1} y={y(acc) - 4} textAnchor="middle" fontSize="10" fontWeight={600} fill="#374151">
+                  {fmt(acc, block.number)}
+                </text>
+              )}
               <text x={cx} y={H - bottom + 16} textAnchor="middle" fontSize="11" fill="#374151">
                 <title>{cat}</title>
                 {shortLabel(cat, Math.max(6, Math.floor(slot / 11)))}

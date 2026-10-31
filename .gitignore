@@ -14,11 +14,14 @@ frontend/next-env.d.ts
 
 # 외부 기관 공개 보고서 원문 — 재배포하지 않는다(받는 곳은 demo/public_samples/README.md)
 demo/public_samples/*.pdf
-# 공모전 기획서 초안 — 공개 저장소에 올리지 않는다
-docs/*기획서*
+# 공모전 기획서·방향 검토·참고 자료 — 공개 저장소에 올리지 않는다
+docs/
 # 데모 스크립트가 남기는 id
 demo/.demo_ws
 demo/.demo_report
 demo/.rehearsal_*
 demo/nbim/.ws
 demo/nbim/.report
+# KIRS 샘플(사내 시험용, 재배포 금지)에서 뽑은 정답지·덤프·대조 결과 — 스크립트만 올린다
+demo/kirs/*.json
+demo/kirs/*.md

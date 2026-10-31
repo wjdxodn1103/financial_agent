@@ -36,7 +36,7 @@ export interface WorkspaceDetail {
   users: UserInfo[];
 }
 
-export type WorkspaceView = "home" | "schedule" | "tasks" | "search" | "channel" | "research" | "reports" | "documents" | "company" | "assets" | "formats" | "ledger" | "reviews" | "requests" | "members";
+export type WorkspaceView = "home" | "schedule" | "tasks" | "search" | "channel" | "research" | "reports" | "documents" | "company" | "assets" | "formats" | "ledger" | "reviews" | "requests" | "members" | "sources" | "market" | "dataStatus" | "dashboard" | "routines" | "quality" | "guideline" | "calendar";
 
 // ─── 드라이브(BE drive.py) ───
 export type FolderAccess = "all" | "private" | "members";
@@ -58,6 +58,22 @@ export interface DriveDocCard {
   sections: number;
   createdBy: string;
   updatedAt: string;
+  /** 문서 상태 — draft(AI 초안)·review(검토 중)·approved(승인) */
+  approval?: "draft" | "review" | "approved" | null;
+  routine?: boolean;
+}
+
+/** 보내기 — backend app/sharing.py view() */
+export interface ShareItem {
+  id: string;
+  itemKind: "doc" | "data" | "table";
+  itemId: string;
+  title: string;
+  from: { id: string; name: string };
+  to: string[];
+  message: string;
+  review: boolean;
+  createdAt: string;
 }
 
 export interface DriveListing {
@@ -422,6 +438,8 @@ export interface MyReviewRequest {
   done: boolean;
   at: string;
   updatedAt: string;
+  /** 요청 메모 */
+  note?: string;
 }
 
 export interface MyDocument {
@@ -450,4 +468,17 @@ export interface MyPage {
   documents: MyDocument[];
   activity: MyActivity[];
   reviewers: { id: string; name: string }[];
+}
+
+/** 알림함 — backend app/notify.py view(). link = 화면 이동(?w=&v=&s=&t=) */
+export interface NotificationItem {
+  id: string;
+  workspaceId: string;
+  kind: "routine" | "share" | "review" | "assumption" | "source" | "dashboard" | "calendar" | "system";
+  title: string;
+  body: string;
+  link: { w?: string; v?: string; s?: string; t?: string };
+  ref: Record<string, unknown>;
+  createdAt: string;
+  read: boolean;
 }

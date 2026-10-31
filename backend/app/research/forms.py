@@ -4,6 +4,8 @@
    찾는다('투자수익률 1주'). 이름·설명 열(운용사·티커·투자의견…)은 글 열. 값은 fill.fill_table 이 원장·문단에서(못 찾으면 빈 칸).
  - 자료 속 표 → 양식 모양(map_columns + doc_tables.build_from_doc(col_map)): 양식 열을 원 표 열에 잇는다 — 이름이 같으면 코드로,
    남은 것은 LLM 한 번(열 번호만 고른다). 칸은 원문 칸 그대로(원장 수치로 이어짐), 못 잇는 열은 빈 칸.
+ - 열이 전부 기간인 표 양식(재무표 — 행 = 계정, 열 = 2022·2023·2025F)(period_columns·form_period_table): 행 = 기간·열 = 계정으로
+   채우고(대상 기업으로 찾는다) 보일 때만 뒤집는다(items_as_rows). 샘플의 연도는 내용이라 실적 열의 마지막을 자료의 최근 연도로 옮긴다(shift_years).
  - 차트 양식(chart_body): 원 표(채운 표·꺼낸 표)의 숫자 열을 양식 계열에 잇고(이름, 안 되면 순서) 종류·축은 양식대로.
    표 없이 차트 양식만 쓰면 계열을 열로 한 표를 먼저 채운다(form_chart_table_spec — 가로축이 날짜·기간이면 행 = 기간).
 data["form"] = form_meta(...) — 화면·Word 가 양식 모양(2단 머리·색·선·차트 색·범례)으로 그린다(block.to_block·chart.chart_block).
@@ -15,9 +17,10 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.ledger.figures import period_key
 from app.llm.base import ChatParams
 from app.research.entities import norm
-from app.research.templates import MAX_ITEMS, SUBJECT_KINDS, normalize_spec
+from app.research.templates import MAX_ITEMS, SUBJECT_KINDS, normalize_items, normalize_spec
 from app.templates_import.forms import split_unit
 
 logger = logging.getLogger(__name__)
@@ -102,6 +105,43 @@ def form_table_spec(asset: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[st
             groups.append({"label": g["label"] if _grouped(g) else "", "unit": g.get("unit") or "", "keys": keys[k : k + n]})
             k += n
     return spec, groups
+
+
+_PERIOD_KEY = re.compile(r"^\d{4}(?:E|Q[1-4]|H[12]|M9)?$")
+_YEAR_COL = re.compile(r"^((?:19|20)\d{2})(\s*\(?[AEFP]\)?)?$", re.I)
+
+
+def period_columns(asset: Dict[str, Any]) -> List[str]:
+    """표 양식의 열이 전부 기간(2022·2025F·1Q26·2024H1)이면 그 열 — 행 = 계정·지표인 재무표 양식. 아니면 빈 목록."""
+    if asset.get("kind") != "table":
+        return []
+    cols = [str(c).strip() for g in (asset.get("table") or {}).get("groups") or [] for c in g.get("columns") or []]
+    if len(cols) < 2 or not all(_PERIOD_KEY.match(period_key(c)) for c in cols):
+        return []
+    return cols
+
+
+def shift_years(cols: List[str], last_actual: Optional[int]) -> List[str]:
+    """샘플 연도는 그 호의 내용 — 실적 열(F·E 없는 연도)의 마지막이 last_actual 이 되게 연도만 옮긴다
+    (2022·2023·2024·2025F·2026F, 2025 → 2023·2024·2025·2026F·2027F). 연도 열이 아니거나 실적 열이 없으면 그대로."""
+    ms = [_YEAR_COL.match(c) for c in cols]
+    if not last_actual or not all(ms):
+        return cols
+    actual = [int(m.group(1)) for m in ms if m and not (m.group(2) or "").strip()]
+    if not actual:
+        return cols
+    d = last_actual - max(actual)
+    return [f"{int(m.group(1)) + d}{(m.group(2) or '').strip()}" for m in ms if m]
+
+
+def form_period_table(asset: Dict[str, Any], rows: List[str], cols: List[str]) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """열이 기간인 표 양식 + 행(계정) → (spec, subjects = 기간, items = 계정). 저장은 '행 = 기간'(채우기가 기간마다 대상 기업으로 찾는다),
+    보일 때는 items_as_rows 로 뒤집어 양식처럼 행 = 계정·열 = 기간. 단위는 양식 머리의 '(억원)'."""
+    t = asset.get("table") or {}
+    unit = re.sub(r"^\s*[(\[]?\s*(?:단위\s*[:：]\s*)?|\s*[)\]]?\s*$", "", str(((t.get("groups") or [{}])[0]).get("unit") or ""))
+    items = normalize_items([{"label": r, "type": "number", "metric": r, **({"unit": unit} if unit else {})} for r in rows][: MAX_ITEMS * 2])
+    spec = normalize_spec({"name": asset["name"], "subject": {"kind": "period", "label": "기간"}, "items": items[:MAX_ITEMS], "orientation": "items_as_rows"})
+    return spec, [{"label": c} for c in cols], items
 
 
 def form_chart_table_spec(asset: Dict[str, Any]) -> Dict[str, Any]:
@@ -217,4 +257,4 @@ def chart_body(asset: Dict[str, Any], source: Dict[str, Any], title: str) -> Dic
     }
 
 
-__all__ = ["CHART_LABEL", "chart_body", "form_chart_table_spec", "form_line", "form_meta", "form_table_spec", "format_assets", "header_names", "map_columns", "match_form"]
+__all__ = ["CHART_LABEL", "chart_body", "form_chart_table_spec", "form_line", "form_meta", "form_period_table", "form_table_spec", "format_assets", "header_names", "map_columns", "match_form", "period_columns", "shift_years"]

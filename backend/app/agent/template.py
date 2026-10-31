@@ -120,8 +120,34 @@ REGISTERED = "rt:"  # 샘플에서 등록한 리포트 양식(DB ReportTemplate)
 _registered: Dict[str, Dict[str, Any]] = {}
 
 
+def blueprint_items(bp: Dict[str, Any]) -> List[Item]:
+    """양식 2.0 틀 → 쓰는 단위 항목 — 요약 1칸 + 장마다 소주제 칸(장 띠·부록·표지는 문서 layout 메타로 그린다).
+    소주제 칸은 required(진행률이 처음부터 '완료'로 보이지 않게). part·role·depth·blocks 는 섹션에 그대로 실린다(session.seed_sections)."""
+    rules = bp.get("rules") or {}
+    items: List[Item] = []
+    for p in bp.get("parts") or []:
+        if p.get("role") == "summary":
+            blocks = list(p.get("blocks") or []) + list(p.get("sidebar") or [])
+            items.append({"id": "summary", "title": "요약", "phase": "front", "level": "required", "aliases": ["요약", "투자 요약"],
+                          "desc": f"{rules.get('claim') or ''} 주장 {p.get('claims') or 3}개를 '[제목] 주장' 줄로 시작하는 문단으로.",
+                          "queries": [], "inputs": [], "part": "summary", "role": "summary", "depth": 1, "blocks": blocks})
+        elif p.get("role") == "chapter":
+            for k, s in enumerate(p.get("subtopics") or []):
+                items.append({"id": f"{p['id']}_{k + 1}", "title": s.get("title") or f"{p['title']} {k + 1}", "phase": "body", "level": "required",
+                              "aliases": [x for x in [s.get("example")] if x], "desc": " ".join(x for x in [s.get("guide"), p.get("guide")] if x),
+                              "queries": [], "inputs": [], "part": p["id"], "role": "subsection", "depth": 2, "blocks": list(s.get("blocks") or [])})
+    return items
+
+
 def registered_to_type(row: Any) -> Dict[str, Any]:
-    """ReportTemplate → REPORT_TYPES 와 같은 모양(섹션 = 항목, 안내 = desc, 자리 = slots)."""
+    """ReportTemplate → REPORT_TYPES 와 같은 모양(섹션 = 항목, 안내 = desc, 자리 = slots). 양식 2.0 틀이 있으면 틀에서(blueprint_items)."""
+    bp = (row.spec or {}).get("blueprint")
+    if isinstance(bp, dict) and bp.get("version") == 2:
+        items = blueprint_items(bp)
+        order = [it["id"] for it in items if it["id"] != "summary"] + [it["id"] for it in items if it["id"] == "summary"]  # 장 먼저, 요약은 맨 뒤
+        forms = [{"id": f["id"], "kind": f["kind"], "name": f.get("title") or "", "desc": "", "chartType": ""} for f in (bp.get("forms") or {}).values() if f.get("kind") == "table"]
+        return {"title": row.name, "desc": (row.spec or {}).get("desc") or bp.get("desc") or "", "style": (row.spec or {}).get("style") or bp.get("style") or "", "kind": "registered",
+                "items": items, "order": order, "scope": row.scope, "workspaceId": row.workspace_id, "ownerId": row.owner_id, "assets": forms, "blueprint": bp}
     secs = (row.spec or {}).get("sections") or []
     items = [
         {"id": s.get("id") or f"s{i + 1}", "title": s["title"], "phase": "body", "level": "recommended", "aliases": [], "desc": s.get("guide") or "", "queries": [], "inputs": [], "slots": s.get("slots") or []}

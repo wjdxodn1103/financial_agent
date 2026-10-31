@@ -3,6 +3,8 @@
 /**
  * 오른쪽 '데이터' — 평소엔 데이터 설정(켠 묶음·추가한 데이터·AI 가 쓰는 데이터 수), AI 가 답·문서에 쓴 근거가 생기면 그 목록.
  * 근거 = 채팅 답의 출처 링크(#cite=문서~문단) + 문서 본문 인용([@문서#문단]). 누르면 원문 확인 창. 본문의 [n]·카드의 '근거'는 그 문장·섹션의 출처를 위에 띄운다.
+ * 표 문단은 글 덩어리('계정과목 | 2026 … ') 대신: 문장으로 고른 출처면 문장 속 금액과 같은 칸의 행만 작은 표 + '문장의 44.76억원 = 원본 4,476,101,021원',
+ * 목록에서는 표 제목과 행 이름 몇 개.
  */
 import { memo, useEffect, useMemo, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -52,28 +54,85 @@ function useUsed(): Used[] {
   }, [messages, report]);
 }
 
-function SourceRow({ docId, chunk, note }: { docId: string; chunk: string; note?: string }) {
+/** 문장 속 금액과 같은 칸의 행만 — 머리글 + 그 행들(최대 4), 그 칸은 강조 */
+function HitTable({ rows, hits }: { rows: string[][]; hits: { r: number; c: number }[] }) {
+  const picked = [...new Set(hits.map((h) => h.r))].slice(0, 4);
+  return (
+    <span className="mt-1 block overflow-x-auto rounded-md bg-white ring-1 ring-neutral-200">
+      <table className="w-full border-collapse text-[11px] tabular-nums">
+        <thead>
+          <tr>
+            {rows[0].map((h, c) => (
+              <th key={c} className={cn("border-b border-neutral-200 bg-neutral-50 px-1.5 py-0.5 font-medium whitespace-nowrap text-neutral-500", c === 0 ? "text-left" : "text-right")}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {picked.map((r) => (
+            <tr key={r}>
+              {rows[r].map((v, c) => (
+                <td key={c} className={cn("px-1.5 py-0.5 whitespace-nowrap", c === 0 ? "text-left text-text-primary" : "text-right", hits.some((h) => h.r === r && h.c === c) && "bg-amber-200/70 font-semibold")}>
+                  {v}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </span>
+  );
+}
+
+function SourceRow({ docId, chunk, note, quote }: { docId: string; chunk: string; note?: string; quote?: string }) {
   const workspaceId = useWorkspaceId();
   const actions = useReportActions();
   const [d, setD] = useState<ChunkContext | null>(null);
   useEffect(() => {
     let cancelled = false;
-    getChunk(workspaceId, docId, chunk)
+    getChunk(workspaceId, docId, chunk, quote)
       .then((x) => !cancelled && setD(x))
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, docId, chunk]);
+  }, [workspaceId, docId, chunk, quote]);
   const where = d ? (d.chunk.sheet ? `시트 ${d.chunk.sheet}` : d.chunk.page != null ? `p.${d.chunk.page}` : d.chunk.heading ? `§ ${d.chunk.heading}` : "") : "";
+  const rows = d?.chunk.kind === "table" ? (d.chunk.rows ?? []) : [];
+  const hits = d?.hits ?? [];
   return (
-    <button type="button" onClick={() => actions.openDocument(docId, chunk)} className="flex w-full cursor-pointer flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left hover:bg-neutral-50">
+    <button type="button" onClick={() => actions.openDocument(docId, chunk, null, quote)} className="flex w-full cursor-pointer flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left hover:bg-neutral-50">
       <span className="flex items-center gap-1.5 text-[11px] text-text-secondary">
         {where && <span className="font-medium text-neutral-600">{where}</span>}
         {d?.chunk.kind === "table" && <span className="rounded bg-neutral-100 px-1">표</span>}
-        {note && <span className="ml-auto">{note}</span>}
+        {note && <span className="ml-auto truncate">{note}</span>}
       </span>
-      <span className="line-clamp-2 text-[12px] leading-5 text-text-primary">{d ? d.chunk.text.replace(/\s+/g, " ") : "…"}</span>
+      {!d ? (
+        <span className="text-[12px] text-text-secondary">…</span>
+      ) : rows.length > 1 && hits.length > 0 ? (
+        <>
+          <HitTable rows={rows} hits={hits} />
+          {hits.slice(0, 3).map((h) => (
+            <span key={`${h.r}-${h.c}`} className="text-[11px] leading-4 text-text-secondary">
+              문장의 <b className="font-semibold text-text-primary">{h.as}</b> = 원본 {rows[h.r][0]} {rows[h.r][h.c]}
+              {d.chunk.unit ? d.chunk.unit : ""}
+            </span>
+          ))}
+        </>
+      ) : rows.length > 1 ? (
+        <span className="line-clamp-2 text-[12px] leading-5 text-text-primary">
+          {d.chunk.heading ? `${d.chunk.heading} — ` : ""}
+          {rows
+            .slice(1, 7)
+            .map((r) => r[0])
+            .filter(Boolean)
+            .join(" · ")}
+          {rows.length > 7 ? ` 외 ${rows.length - 7}행` : ""}
+        </span>
+      ) : (
+        <span className="line-clamp-2 text-[12px] leading-5 text-text-primary">{d.chunk.text.replace(/\s+/g, " ")}</span>
+      )}
     </button>
   );
 }
@@ -121,7 +180,7 @@ function FocusSources() {
       <div className="mt-1">
         {anchors.length === 0 && <p className="px-2.5 py-2 text-[12px] text-text-secondary">출처가 없습니다.</p>}
         {anchors.slice(0, MAX_ROWS).map((a) => (
-          <SourceRow key={`${a.docId}#${a.chunk}`} docId={a.docId} chunk={a.chunk} note={`[${a.n}] ${documents.find((d) => d.id === a.docId)?.label ?? ""}`} />
+          <SourceRow key={`${a.docId}#${a.chunk}`} docId={a.docId} chunk={a.chunk} quote={focus.sentence || undefined} note={`[${a.n}] ${documents.find((d) => d.id === a.docId)?.label ?? ""}`} />
         ))}
       </div>
     </section>

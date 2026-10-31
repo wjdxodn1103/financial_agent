@@ -3,7 +3,7 @@ import { API_BASE } from "../report/constants";
 import { jsonInit, req } from "../report/api";
 import type { TemplateScope } from "../research/types";
 import { getUserId } from "../workspace/auth";
-import type { DocFormat, FormatImportState, FormatSection } from "./types";
+import type { DocFormat, FormatImportState, FormatSection, OutlineChapter } from "./types";
 
 /** 에셋 고치기 — 이름·설명·빼기·순서와 차트 종류(VL 오독 바로잡기)만. 구성·겉모양·위치는 서버에 저장된 것 */
 type AssetEdit = { id: string; name: string; desc: string; chartType?: string };
@@ -13,7 +13,7 @@ const wid = (w: string) => `/api/workspaces/${encodeURIComponent(w)}`;
 export const listFormats = async (w: string) => (await req<{ formats: DocFormat[] }>(`${wid(w)}/formats`)).formats;
 /** from = 복사할 양식 id(기본·등록), 없으면 빈 섹션 하나짜리 */
 export const createFormat = (w: string, body: { name?: string; scope?: TemplateScope; from?: string }) => req<DocFormat>(`${wid(w)}/formats`, jsonInit("POST", body));
-export const patchFormat = (w: string, id: string, body: { name?: string; desc?: string; style?: string; sections?: FormatSection[]; assets?: AssetEdit[]; scope?: TemplateScope }) =>
+export const patchFormat = (w: string, id: string, body: { name?: string; desc?: string; style?: string; sections?: FormatSection[]; assets?: AssetEdit[]; outline?: OutlineChapter[]; scope?: TemplateScope }) =>
   req<DocFormat>(`${wid(w)}/formats/${encodeURIComponent(id)}`, jsonInit("PATCH", body));
 /** 예시 문서 — 브라우저에서 바로 연다(PDF 는 창 안에) */
 export const formatSampleUrl = (w: string, id: string) => `${API_BASE}${wid(w)}/formats/${encodeURIComponent(id)}/sample?uid=${encodeURIComponent(getUserId() ?? "")}`;

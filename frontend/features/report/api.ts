@@ -99,7 +99,9 @@ export const removeDocument = (w: string, params: { job?: string; doc?: string }
 /** 문단 페이지 — 뷰어가 스크롤하며 불러온다 */
 export const getChunks = (w: string, docId: string, offset: number, limit = 30) => req<ChunksPage>(`${wid(w)}/documents/${docId}/chunks?offset=${offset}&limit=${limit}`);
 /** 근거 문단(앞뒤 포함) */
-export const getChunk = (w: string, docId: string, chunkId: string) => req<ChunkContext>(`${wid(w)}/documents/${docId}/chunk?id=${encodeURIComponent(chunkId)}`);
+/** quote = 그 문단을 인용한 문장 — 주면 hits(문장 속 금액·비율과 같은 표 칸) */
+export const getChunk = (w: string, docId: string, chunkId: string, quote?: string | null) =>
+  req<ChunkContext>(`${wid(w)}/documents/${docId}/chunk?id=${encodeURIComponent(chunkId)}${quote ? `&quote=${encodeURIComponent(quote.slice(0, 900))}` : ""}`);
 /** 링크로 여는 원본 — 헤더를 못 실어 계정을 쿼리로 */
 /** 원문 확인 — 가공한 값이 원본 파일의 어디인지(BE app/docs/source_view.py) */
 export type SourceLocation = {
@@ -108,18 +110,36 @@ export type SourceLocation = {
   fileName: string;
   found: boolean;
   where: string;
-  extracted: { display?: string; metric?: string; period?: string; raw?: string } | { text: string } | null;
+  /** 근거 고정 — 저장 때 얼려 둔 글자·값으로 다시 찾은 결과(exact·relocated·missing, 핀이 없으면 unpinned) */
+  anchorStatus?: "exact" | "relocated" | "missing" | "unpinned";
+  pinned?: { quote?: string; value?: { raw?: string } | null; rowLabel?: string; colLabel?: string; pinnedAt?: string } | null;
+  /** quote = 표 문단을 문장으로 열었을 때 — text 는 그 문장 */
+  extracted: { display?: string; metric?: string; period?: string; raw?: string } | { text: string; quote?: boolean } | null;
+  /** 연결 스냅샷(DART·EDGAR·ECOS·FRED·주가)의 출처 — 연결 이름·조회 시각·원문 주소(DART 는 공시 뷰어) */
+  origin?: { name: string; title: string; fetchedAt: string; url: string; urlLabel: string } | null;
 } & (
   /** marks = 쪽마다 상자(문단이 다음 쪽으로 이어지면 쪽이 둘 이상) — 없으면 rects 가 page 쪽 상자 */
   | { kind: "pdf"; page: number; pages: number; ratio: number; rects: [number, number, number, number][]; marks?: Record<string, [number, number, number, number][]> }
   | { kind: "sheet"; sheet: string; cols: string[]; rowNums: number[]; grid: string[][]; hl: [number, number][] }
   | { kind: "docx"; blocks: ({ type: "p"; text: string } | { type: "table"; rows: string[][] })[]; at: number | null; cell: [number, number] | null }
   | { kind: "text"; lines: string[]; lineNums: number[]; hl: number[]; mark: string }
+  /** 연결 스냅샷 — 표면 그 시트 표 + 칠할 칸(몸통 행 번호, 열) + 그 값이 나온 API 응답 항목, 글이면 앞뒤 문단 */
+  | {
+      kind: "snapshot";
+      table?: { title: string; unit: string; header: string[]; rows: string[][] };
+      hl?: [number, number][];
+      record?: { key: string; name: string; value: string; on: boolean }[] | null;
+      /** record 가 어느 칸의 것인지 — '매출액 · 2026 상반기 누적' */
+      recordOf?: string;
+      blocks?: ({ type: "p"; text: string } | { type: "table"; rows: string[][] })[];
+      at?: number | null;
+    }
 );
-export const locateSource = (w: string, docId: string, chunk?: string | null, cell?: [number, number] | null) => {
+export const locateSource = (w: string, docId: string, chunk?: string | null, cell?: [number, number] | null, quote?: string | null) => {
   const p = new URLSearchParams();
   if (chunk) p.set("chunk", chunk);
   if (cell) p.set("cell", `${cell[0]},${cell[1]}`);
+  if (quote && !cell) p.set("quote", quote.slice(0, 900));
   return req<SourceLocation>(`${wid(w)}/documents/${encodeURIComponent(docId)}/locate?${p}`);
 };
 export const pageImageUrl = (w: string, docId: string, page: number) => `${API_BASE}${wid(w)}/documents/${encodeURIComponent(docId)}/page/${page}.png?uid=${encodeURIComponent(getUserId() ?? "")}`;

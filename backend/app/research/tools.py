@@ -336,6 +336,14 @@ async def _fill_and_store(table_id: str, data: Dict[str, Any], rc: ResearchConte
     return out
 
 
+def _title_entity(title: str, doc_ids: List[str]) -> str:
+    """표 제목에 든 기업 이름 — 자료 카드의 회사명 가운데 제목에 그대로 든 가장 긴 것(없으면 빈 문자열)."""
+    t = entities.norm(title)
+    names = {str(((load_meta(d) or {}).get("card") or {}).get("company") or "").strip() for d in doc_ids}
+    hits = [n for n in names if len(entities.norm(n)) >= 2 and entities.norm(n) in t]
+    return max(hits, key=len) if hits else ""
+
+
 async def _build_table(args: Dict[str, Any], rc: ResearchContext) -> str:
     title = _arg(args.get("title"))
     rows = [str(x).strip() for x in args.get("rows") or [] if str(x).strip()]
@@ -368,7 +376,12 @@ async def _build_table(args: Dict[str, Any], rc: ResearchContext) -> str:
     if not subjects:
         return "행(기업·문서·기간)을 rows 에 넣어 다시 부른다."
     title = title or spec.get("name") or "표"
-    table_id, out = await _create_and_fill(spec, subjects, {"period": _arg(args.get("period")), "basis": _arg(args.get("basis"))}, tpl["id"] if tpl else None, items, title, rc)
+    inputs: Dict[str, Any] = {"period": _arg(args.get("period")), "basis": _arg(args.get("basis"))}
+    if kind == "period":  # 기간 표('에스비비테크 연도별 실적') — 제목의 기업을 대상으로(행마다 그 기업·그 기간을 코드가 원장에서 찾는다)
+        ent = _title_entity(title, doc_ids)
+        if ent:
+            inputs["entity"] = ent
+    table_id, out = await _create_and_fill(spec, subjects, inputs, tpl["id"] if tpl else None, items, title, rc)
     note = ""
     if spec.get("chart"):  # 차트 양식 — 채운 표로 차트도
         chart = await _chart_from_spec(table_id, spec, title, rc)
@@ -882,8 +895,9 @@ def _doc_table_pick(tables: List[Dict[str, Any]], ref: str) -> Optional[Dict[str
 async def _use_form(asset: Dict[str, Any], rc: ResearchContext, *, rows: List[str], document: str, table_ref: str, period: str, title: str) -> tuple:
     """양식으로 표(차트 양식이면 계열을 열로 한 표 → 차트)를 만든다. → (만든 에셋 id 또는 None, 모델에게 줄 말).
     document 가 있으면 그 자료 속 표를 양식 열로 옮기고(원문 칸 그대로), 아니면 rows 로 자료를 찾아 채운다."""
+    from app.ledger.figures import looks_like_period
     from app.research.doc_tables import create_from_doc, doc_tables
-    from app.research.forms import form_chart_table_spec, form_meta, form_table_spec, map_columns
+    from app.research.forms import form_chart_table_spec, form_meta, form_period_table, form_table_spec, map_columns, period_columns, shift_years
 
     chart = asset["kind"] == "chart"
     spec, groups = (form_chart_table_spec(asset), []) if chart else form_table_spec(asset)
@@ -919,14 +933,38 @@ async def _use_form(asset: Dict[str, Any], rc: ResearchContext, *, rows: List[st
         msg = _summary(made["title"], made["data"]).replace("완료(오른쪽 패널)", "양식 모양으로 옮김(원문 칸 그대로)") + (f" — 원 표에 없어 빈 열: {', '.join(empty)}" if empty else "")
         table_id = made["id"]
     else:
+        pcols = [] if chart else period_columns(asset)
         if not rows:
-            return None, "[내부 메모] 행(대상)이 정해지지 않았다 — 자료 목록·대화에서 분명하면 rows 에 넣어 다시 부르고, 아니면 어떤 대상(행)으로 채울지 사용자에게 한 문장으로 묻는다. 자료 속에 같은 내용의 표가 있으면 document 로 옮길 수 있다."
-        table_id, out = await _create_and_fill(spec, [{"label": r} for r in rows], {"period": period}, None, spec["items"], title, rc, form=meta)
+            what = "행(계정·지표 — 예: 매출액, 영업이익)" if pcols else "행(대상)"
+            return None, f"[내부 메모] {what}이 정해지지 않았다 — 자료 목록·대화에서 분명하면 rows 에 넣어 다시 부르고, 아니면 어떤 {what}으로 채울지 사용자에게 한 문장으로 묻는다. 자료 속에 같은 내용의 표가 있으면 document 로 옮길 수 있다."
+        if pcols and all(looks_like_period(r) and not re.search(r"[가-힣A-Za-z]{2,}", re.sub(r"분기|반기|상반기|하반기|FY", "", r)) for r in rows):
+            return None, f"[내부 메모] '{asset['name']}' 양식은 열이 기간({', '.join(pcols)})이다 — rows 에는 기간이 아니라 계정·지표(예: 매출액, 영업이익)를 넣어 다시 부른다(연도는 코드가 자료의 최근 실적 연도에 맞춘다)."
+        if pcols:
+            # 재무표 양식(행 = 계정, 열 = 연도) — 대상 기업의 기간마다 계정을 찾는다. 연도는 자료의 최근 실적 연도에 맞춰 옮긴다
+            entity = _arg((rc.doc.get("setup") or {}).get("subject")) or _title_entity(title, rc.doc.get("documentIds") or [])
+            years = [int(y) for y in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", period or "")]  # '2023~2025' → 마지막 실적 2025
+            base = max(years) if years else await asyncio.to_thread(_latest_year, rc, entity)
+            pspec, subjects, items = form_period_table(asset, rows, shift_years(pcols, base))
+            table_id, out = await _create_and_fill(pspec, subjects, {"entity": entity} if entity else {}, None, items, title, rc, form=meta)
+        else:
+            table_id, out = await _create_and_fill(spec, [{"label": r} for r in rows], {"period": period}, None, spec["items"], title, rc, form=meta)
         msg = _summary(title, out)
     if not chart:
         return table_id, msg
     chart_id, cmsg = await _form_chart(asset, table_id, rc, title)
     return (chart_id or table_id), f"{msg}\n{cmsg}"
+
+
+def _latest_year(rc: ResearchContext, entity: str) -> Optional[int]:
+    """이 작업 자료(대상 기업 자료가 있으면 그것만)의 원장에서 가장 최근 연간 실적 연도 — 없으면 None(양식 연도 그대로)."""
+    from app.ledger.figures import load_figures
+
+    docs = rc.doc.get("documentIds") or []
+    if entity:
+        mine = [d for d in docs if entities.norm(str(((load_meta(d) or {}).get("card") or {}).get("company") or "")) == entities.norm(entity)]
+        docs = mine or docs
+    years = [int(f["periodKey"]) for d in docs for f in load_figures(d) if re.fullmatch(r"(?:19|20)\d{2}", str(f.get("periodKey") or ""))]
+    return max(years) if years else None
 
 
 async def _form_chart(asset: Dict[str, Any], source: str, rc: ResearchContext, title: str) -> tuple:

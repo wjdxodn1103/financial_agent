@@ -84,7 +84,7 @@ async def answer_question(workspace_id: str, question_id: str) -> Dict[str, Any]
     tools = [SEARCH_TOOL_SCHEMA, LOOKUP_SCHEMA, CALC_TOOL_SCHEMA]
     content = ""
     for r in range(ROUNDS):
-        res = await llm.complete("chat", ChatParams(messages=messages, tools=tools, tool_choice="auto" if r < ROUNDS - 1 else "none", temperature=0.2, max_tokens=2500, reasoning_effort="low", timeout_s=180))
+        res = await llm.complete("chat", ChatParams(messages=messages, tools=tools, tool_choice="auto" if r < ROUNDS - 1 else "none", temperature=0.2, max_tokens=2500, timeout_s=180))
         tcs = res.tool_calls or []
         content = res.content or content
         if not tcs:

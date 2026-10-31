@@ -37,8 +37,10 @@ const TOOLS: Record<string, string> = {
 
 export function statusLabel(stage: string | null | undefined): string | null {
   if (!stage) return null;
-  if (stage.startsWith("tool:")) return TOOLS[stage.slice(5)] ?? "작업하는 중";
-  return STAGES[stage] ?? null;
+  // 'writer.search|“검색어”' · 'tool:search_docs|“검색어”' — 단계 + 지금 다루는 것(검색어·계산식·찾은 자료 수)
+  const [base, detail] = stage.split("|", 2);
+  const label = base.startsWith("tool:") ? (TOOLS[base.slice(5)] ?? "작업하는 중") : (STAGES[base] ?? null);
+  return label && detail ? `${label} — ${detail}` : label;
 }
 
 export function toolLabel(name: string): string {

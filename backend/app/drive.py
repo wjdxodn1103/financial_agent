@@ -187,7 +187,8 @@ class DriveService:
             if x.parent_id == here and x.id in seen
         ]
         docs = [
-            {"id": r.id, "title": r.title or "제목 없는 리포트", "reportType": r.report_type, "written": r.written, "sections": len((r.doc or {}).get("sections") or []), "createdBy": names.get(r.created_by, ""), "updatedAt": iso(r.updated_at)}
+            {"id": r.id, "title": r.title or "제목 없는 리포트", "reportType": r.report_type, "written": r.written, "sections": len((r.doc or {}).get("sections") or []), "createdBy": names.get(r.created_by, ""), "updatedAt": iso(r.updated_at),
+             "approval": ((r.doc or {}).get("approval") or {}).get("status"), "routine": bool(((r.doc or {}).get("origin") or {}).get("routine"))}
             for r in self.repo.reports(workspace_id)
             if where(r.id) == here and has_doc(r.doc or {})  # 문서가 붙은 작업만(대화만 한 AI 작업은 드라이브에 안 보인다)
         ]

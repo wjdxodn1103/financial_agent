@@ -8,7 +8,7 @@
  * 숨긴 기능(FEATURES): 데이터 연결·공용 자료실·판 비교.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, FilePlus2, FileText, Folder, FolderInput, FolderOpen, FolderPlus, HardDrive, History, Library, Loader2, Lock, MoreHorizontal, Pencil, PlugZap, Plus, Share2, Table2, Trash2, Upload, Users, X } from "lucide-react";
+import { ChevronRight, FilePlus2, FileText, Folder, FolderInput, FolderOpen, FolderPlus, HardDrive, History, Library, Loader2, Lock, MoreHorizontal, Pencil, PlugZap, Plus, Share2, Table2, Trash2, Upload, Users, X, Send, Flag, NotebookPen } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -17,9 +17,13 @@ import { ACCEPT } from "../../../report/components/library/DocumentsFolder";
 import { FileTypeIcon, formatSize } from "../../../report/components/library/rows";
 import { DocViewerBody } from "../../../report/components/viewer/DocViewerBody";
 import type { DocumentCard } from "../../../report/types";
+import { useSetAtom } from "jotai";
+import { assumptionsDrawerAtom } from "../../../assumptions/state";
+import { startMinutes } from "../../../assistants/api";
 import { AssetDrawer } from "./AssetsView";
 import { createFolder, deleteFolder, getDrive, moveDriveItems, setDocumentEvidence, updateFolder } from "../../api";
 import { useWorkspace } from "../../context";
+import { APPROVAL_KO, SendDialog } from "../SendDialog";
 import { FEATURES } from "../../features";
 import type { DriveListing, FolderAccess } from "../../types";
 import { DocTablesDialog } from "../DocTablesDialog";
@@ -68,6 +72,8 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
   const [naming, setNaming] = useState<{ id?: string; name: string } | null>(null);
   const [sharing, setSharing] = useState<string | null>(null);
   const [moving, setMoving] = useState<Drag[] | null>(null);
+  const [sending, setSending] = useState<{ kind: "doc" | "data" | "table"; id: string; title: string } | null>(null);
+  const openAssumptions = useSetAtom(assumptionsDrawerAtom);
   const [newDoc, setNewDoc] = useState(false);
   const [menu, setMenu] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -349,6 +355,7 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
                     <span className="block truncate text-[14px] font-medium text-text-primary">{r.title}</span>
                     <span className="block truncate text-[12px] text-neutral-500">
                       {ws.meta.reportTypes.find((t) => t.id === r.reportType)?.title ?? "문서"} · {r.written}/{r.sections} 섹션
+                      {r.approval && <span className="ml-1.5 rounded bg-neutral-100 px-1.5 py-px text-[11px] font-medium text-neutral-700">{APPROVAL_KO[r.approval]}</span>}
                     </span>
                   </span>
                 </span>
@@ -359,7 +366,11 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
                 <RowMenu
                   open={menu === `doc:${r.id}`}
                   onToggle={() => toggleMenu(`doc:${r.id}`)}
-                  items={canEdit ? [{ icon: FolderInput, label: "옮기기", onClick: () => setMoving([{ id: r.id, kind: "doc" }]) }] : []}
+                  items={[
+                    { icon: Send, label: "보내기", onClick: () => setSending({ kind: "doc", id: r.id, title: r.title }) },
+                    ...(FEATURES.assumptions ? [{ icon: Flag, label: "가정", onClick: () => openAssumptions({ docKind: "report", docRef: r.id, title: r.title }) }] : []),
+                    ...(canEdit ? [{ icon: FolderInput, label: "옮기기", onClick: () => setMoving([{ id: r.id, kind: "doc" as const }]) }] : []),
+                  ]}
                 />
               </div>
             ))}
@@ -391,7 +402,10 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
                 <RowMenu
                   open={menu === `table:${t.id}`}
                   onToggle={() => toggleMenu(`table:${t.id}`)}
-                  items={canEdit ? [{ icon: FolderInput, label: "옮기기", onClick: () => setMoving([{ id: t.id, kind: "table" }]) }] : []}
+                  items={[
+                    { icon: Send, label: "보내기", onClick: () => setSending({ kind: "table", id: t.id, title: t.title }) },
+                    ...(canEdit ? [{ icon: FolderInput, label: "옮기기", onClick: () => setMoving([{ id: t.id, kind: "table" as const }]) }] : []),
+                  ]}
                 />
               </div>
             ))}
@@ -431,6 +445,11 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
                   open={menu === `data:${c.id}`}
                   onToggle={() => toggleMenu(`data:${c.id}`)}
                   items={[
+                    { icon: Send, label: "보내기", onClick: () => setSending({ kind: "data", id: c.id, title: c.title || c.fileName }) },
+                    ...(FEATURES.assumptions ? [{ icon: Flag, label: "가정 표시", onClick: () => openAssumptions({ docKind: "data", docRef: c.id, title: c.title || c.fileName }) }] : []),
+                    ...(FEATURES.assistants && canEdit && /\.(md|txt|docx)$/i.test(c.fileName)
+                      ? [{ icon: NotebookPen, label: "IC 회의록 정리", onClick: () => void run(async () => (await startMinutes(ws.workspaceId, c.id), toast.success("정리를 시작했습니다. 다 쓰면 알림이 옵니다.", { position: "top-center" })), "정리를 시작하지 못했습니다.") }]
+                      : []),
                     ...(canEdit ? [{ icon: FolderInput, label: "옮기기", onClick: () => setMoving([{ id: c.id, kind: "data" as const }]) }] : []),
                     ...(FEATURES.versions && c.version && c.version.version > 1 ? [{ icon: History, label: "이전 판과 비교", onClick: () => (setComparing(c), setPreview(null)) }] : []),
                     ...(canEdit ? [{ icon: Trash2, label: "워크스페이스에서 빼기", danger: true, onClick: () => window.confirm("이 데이터를 워크스페이스에서 뺄까요? 이미 쓴 본문의 출처 표기는 남습니다.") && void run(() => removeDocument(ws.workspaceId, { doc: c.id }), "빼지 못했습니다.") }] : []),
@@ -508,6 +527,7 @@ export function DriveView({ initialFolder = null }: { initialFolder?: string | n
 
       {sharing && d && <ShareDialog folderId={sharing} listing={d} onClose={() => setSharing(null)} onSave={(access, memberIds) => run(() => updateFolder(ws.workspaceId, sharing, { access, memberIds }), "공유 설정을 바꾸지 못했습니다.").then(() => load(folder))} />}
 
+      {sending && <SendDialog item={sending} onClose={() => setSending(null)} />}
       {moving && d && (
         <MoveDialog
           listing={d}

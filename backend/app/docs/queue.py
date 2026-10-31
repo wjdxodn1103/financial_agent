@@ -209,6 +209,10 @@ async def process_job(job_id: str) -> Optional[str]:
         remove_inbox_file(src_path)
         if await asyncio.to_thread(needs_embedding, doc_id):
             schedule_embed(doc_id)
+        if not prep.get("existing"):
+            from app.assumptions.watch import on_uploaded
+
+            _spawn(on_uploaded(doc_id, workspace_id), f"assume-recheck:{doc_id}")  # 직접 올린 공시·보유 내역도 감시 가정을 다시 판정
         return doc_id
     except asyncio.CancelledError:
         await asyncio.to_thread(_set_status, job_id, "queued")

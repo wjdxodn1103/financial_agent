@@ -21,9 +21,11 @@ CURRENCY_WORDS: List[Tuple[str, str]] = [
     ("엔", "JPY"), ("jpy", "JPY"), ("¥", "JPY"), ("위안", "CNY"), ("cny", "CNY"), ("파운드", "GBP"), ("gbp", "GBP"), ("£", "GBP"),
     ("크로네", "NOK"), ("nok", "NOK"),
 ]
-# 본문 금액 뒤에 붙는 통화 낱말(원 외) — '19조 5,860억 크로네'
-_CUR_TAIL = r"(?:원|크로네)?"
-_NUM = re.compile(r"^\s*([(\[]?)\s*([△▲▼\-–−+]?)\s*([$€£¥₩]?)\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*(%|%p|bp)?\s*([)\]]?)\s*$")
+# 본문 금액 뒤에 붙는 통화 낱말 — '19조 5,860억 크로네' · '18억 6,000만 달러'
+_CUR_TAIL = r"(?:원|크로네|달러|유로|엔|위안)?"
+# 천 단위 띄어쓰기('19 586' — 노르웨이·유럽 보고서): 일반 공백·줄 바꿈 없는 공백·좁은 공백·가는 공백
+_THIN = r"[    ]"
+_NUM = re.compile(r"^\s*([(\[]?)\s*([△▲▼\-–−+]?)\s*([$€£¥₩]?)\s*(\d{1,3}(?:,\d{3})+|\d{1,3}(?:" + _THIN + r"\d{3})+|\d+)(\.\d+)?\s*(%|%p|bp)?\s*([)\]]?)\s*$")
 
 
 @dataclass
@@ -66,7 +68,7 @@ def parse_number(raw: Optional[str]) -> Optional[Tuple[float, Dict[str, Any]]]:
     if not m:
         return None
     paren_l, sign, _cur, ip, fp, pct, paren_r = m.groups()
-    value = float(ip.replace(",", "") + (fp or ""))
+    value = float(re.sub(r"[,\s   ]", "", ip) + (fp or ""))
     negative = bool(sign and sign in "△▲▼-–−") or bool(paren_l and paren_r)
     # ▲ 는 한국 공시에서 '증가'를 뜻하기도 한다 — 표 칸 단독이면 대개 음수(△)와 같은 쓰임이라 같이 본다(△가 표준)
     if negative:
@@ -75,8 +77,8 @@ def parse_number(raw: Optional[str]) -> Optional[Tuple[float, Dict[str, Any]]]:
 
 
 _AMOUNT = re.compile(
-    r"(?P<sign>[△▲\-−]?)(?P<cur1>[$€£¥₩]|US\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?"
-    rf"(?P<unit>%p|%|bp|조\s?\d{{1,4}}(?:,\d{{3}})*\s?억\s?{_CUR_TAIL}|조\s?{_CUR_TAIL}|십억\s?{_CUR_TAIL}|억\s?{_CUR_TAIL}|백만\s?{_CUR_TAIL}|천만\s?{_CUR_TAIL}|천\s?원|만\s?원?|원|크로네|달러|유로|엔|위안|배|bn|mn|billion|million|trillion|명|개|건|톤)?",
+    r"(?P<sign>[△▲\-−]?)(?P<cur1>[$€£¥₩]|US\$)?\s?(?P<num>(?<![\d.,])\d{1,3}(?:[    ]\d{3})+(?=\s?(?:billion|million|trillion|bn|mn)\b)|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?"
+    rf"(?P<unit>%p|%|bp|조\s?\d{{1,4}}(?:,\d{{3}})*\s?억\s?{_CUR_TAIL}|조\s?{_CUR_TAIL}|십억\s?{_CUR_TAIL}|억\s?\d{{1,4}}(?:,\d{{3}})*\s?만\s?{_CUR_TAIL}|억\s?{_CUR_TAIL}|백만\s?{_CUR_TAIL}|천만\s?{_CUR_TAIL}|천\s?원|만\s?{_CUR_TAIL}|원|크로네|달러|유로|엔|위안|배|bn|mn|billion|million|trillion|명|개|건|톤)?",
     re.I,
 )
 
@@ -90,14 +92,16 @@ def find_amounts(text: str) -> List[Dict[str, Any]]:
         if not unit and not cur:
             continue
         raw = m.group(0).strip()
-        num = float(m.group("num").replace(",", ""))
+        num = float(re.sub(r"[,\s   ]", "", m.group("num")))
         sign = -1.0 if m.group("sign") in ("△", "-", "−") else 1.0
         decimals = len(m.group("num").split(".")[1]) if "." in m.group("num") else 0
-        if unit.startswith("조") and "억" in unit:
-            # "3조 1,500억원" — 조 + 억
-            eok = float(re.sub(r"[^\d]", "", unit.split("조", 1)[1]) or 0)
-            absval = sign * (num * 1e12 + eok * 1e8)
-            out.append({"raw": raw, "value": sign * num, "unit": unit, "abs": absval, "percent": False, "step": 1e8, "decimals": decimals, "currency": "NOK" if "크로네" in unit else "KRW", "start": m.start(), "end": m.end()})
+        if (unit.startswith("조") and "억" in unit) or (unit.startswith("억") and "만" in unit):
+            # "3조 1,500억원" — 조 + 억 · "18억 6,000만 달러" — 억 + 만
+            big, small = (1e12, 1e8) if unit.startswith("조") else (1e8, 1e4)
+            rest = float(re.sub(r"[^\d]", "", unit.split("조" if big == 1e12 else "억", 1)[1].split("억" if big == 1e12 else "만", 1)[0]) or 0)
+            absval = sign * (num * big + rest * small)
+            cur_word = parse_unit(re.sub(r"[\d,\s조억만]", "", unit)).currency or "KRW"
+            out.append({"raw": raw, "value": sign * num, "unit": unit, "abs": absval, "percent": False, "step": small, "decimals": decimals, "currency": cur_word, "start": m.start(), "end": m.end()})
             continue
         u = parse_unit(unit or (cur or ""))
         if cur and not u.currency:
@@ -137,19 +141,19 @@ CURRENCY_KO = {"NOK": "크로네", "USD": "달러", "EUR": "유로", "JPY": "엔
 
 
 def korean_amount(absval: float, currency: Optional[str]) -> str:
-    """한국어 본문용 '19조 5,860억 크로네' — 조·억 두 단계(억 아래는 반올림). find_amounts 가 그대로 읽는 꼴이라
+    """한국어 본문용 '19조 5,860억 크로네' · '18억 6,000만 달러' — 위 두 단계(조·억 또는 억·만, 그 아래는 반올림). find_amounts 가 그대로 읽는 꼴이라
     작성 모델이 이 표기를 옮겨 쓰면 숫자 확인이 원장 값과 맞춘다(모델에게 단위 환산을 시키지 않는다)."""
     word = "원" if currency in (None, "KRW") else CURRENCY_KO.get(currency, currency)
     sep = "" if word == "원" else " "
     sign = "-" if absval < 0 else ""
-    eok = round(abs(absval) / 1e8)
-    jo, rest = divmod(eok, 10000)
-    if jo and rest:
-        return f"{sign}{jo:,}조 {rest:,}억{sep}{word}"
-    if jo:
-        return f"{sign}{jo:,}조{sep}{word}"
-    if eok:
-        return f"{sign}{eok:,}억{sep}{word}"
+    if abs(absval) >= 1e12:
+        jo, rest = divmod(round(abs(absval) / 1e8), 10000)
+        return f"{sign}{jo:,}조 {rest:,}억{sep}{word}" if rest else f"{sign}{jo:,}조{sep}{word}"
+    if abs(absval) >= 1e8:  # 1조 아래는 억·만(18.6억을 19억으로 반올림하지 않는다)
+        eok, man = divmod(round(abs(absval) / 1e4), 10000)
+        return f"{sign}{eok:,}억 {man:,}만{sep}{word}" if man else f"{sign}{eok:,}억{sep}{word}"
+    if abs(absval) >= 1e4:
+        return f"{sign}{round(abs(absval) / 1e4):,}만{sep}{word}"
     return f"{sign}{abs(absval):,.0f}{sep}{word}"
 
 
@@ -164,3 +168,63 @@ def human_amount(absval: float, currency: Optional[str]) -> str:
         if abs(absval) >= s:
             return f"{currency} {absval / s:,.2f}{w}".replace(".00", "")
     return f"{currency} {absval:,.2f}"
+
+
+# 한국어는 손실을 양수로 쓴다('영업손실 68.63억원' · '영업손실은 2023년 55.72억원, 2024년 68.93억원' · '110.13억원 손실') — 원장은 −6,862,597,018.
+# 금액 앞에서 가장 가까운 지표 낱말이 손실·적자이거나 금액 바로 뒤가 손실·적자면 부호를 뒤집은 값도 같은 값으로 본다(원래 값도 남긴다).
+_METRIC_WORD = re.compile(r"손실|적자|이익|흑자|매출|수익|비용|자산|부채|자본|현금|원가")
+_LOSS_AFTER = re.compile(r"^\s*(?:의\s*)?(?:손실|적자)")
+
+
+def loss_variants(a: Dict[str, Any], sentence: str) -> List[Dict[str, Any]]:
+    """본문 금액 → [그 금액] 또는 손실 문맥이면 [그 금액, 부호 뒤집은 금액]."""
+    if a.get("percent") or (a.get("value") or 0) <= 0:
+        return [a]
+    s, raw = sentence or "", a.get("raw") or ""
+    i = s.find(raw)
+    if i < 0:
+        return [a]
+    words = _METRIC_WORD.findall(s[:i])
+    if (words and words[-1] in ("손실", "적자")) or _LOSS_AFTER.match(s[i + len(raw):]):
+        return [a, {**a, "value": -a["value"], "abs": -(a.get("abs") or 0)}]
+    return [a]
+
+
+def scale_slip(a_abs: float, b_abs: float) -> int:
+    """두 금액의 유효 숫자는 같은데 자릿수만 10^k 배 다르면 k(≠0), 아니면 0.
+    '1조 9,586억'(1.9586e12) vs 원문 '19 586 billion'(1.9586e13) → -1. 단위 환산 실수를 잡는 데 쓴다."""
+    import math
+
+    if not a_abs or not b_abs or (a_abs > 0) != (b_abs > 0):
+        return 0
+    r = math.log10(abs(a_abs) / abs(b_abs))
+    k = round(r)
+    return k if k and abs(r - k) < 0.002 else 0
+
+
+_EN_SCALE = ("billion", "million", "trillion", "bn", "mn")
+_TAIL_CUR = re.compile(r"\s*(kroner|nok|dollars?|usd|euros?|eur|yen|jpy|won|krw|pounds?|gbp)\b", re.I)
+_CUR_CODE = {"kroner": "NOK", "nok": "NOK", "dollar": "USD", "dollars": "USD", "usd": "USD", "euro": "EUR", "euros": "EUR", "eur": "EUR",
+             "yen": "JPY", "jpy": "JPY", "won": "KRW", "krw": "KRW", "pound": "GBP", "pounds": "GBP", "gbp": "GBP"}
+
+
+def korean_hints(text: str, limit: int = 6) -> List[str]:
+    """영문 규모 금액('19 586 billion kroner') → '19 586 billion kroner = 19조 5,860억 크로네'. 작성 자료 옆에 붙여
+    모델이 billion 을 조·억으로 바꾸다 자릿수를 틀리지 않게 한다(2026-10-29 시험: 15번 중 4번 틀림)."""
+    out: List[str] = []
+    for a in find_amounts(text or ""):
+        unit = (a.get("unit") or "").lower()
+        if a["percent"] or not any(unit.startswith(w) for w in _EN_SCALE):
+            continue
+        cur = a.get("currency")
+        m = _TAIL_CUR.match(text, a["end"])
+        if m:
+            cur = _CUR_CODE.get(m.group(1).lower(), cur)
+        ko = korean_amount(a["abs"], cur) if cur else korean_amount(a["abs"], "KRW").removesuffix("원")
+        out.append(f"{a['raw']}{(' ' + m.group(1)) if m else ''} = {ko}")
+    return list(dict.fromkeys(out))[:limit]
+
+
+def sig_digits(raw: str) -> int:
+    """표기의 유효 숫자 수 — '1조 9,586억' → 5, '7억' → 1. 단위 의심은 3자리 이상일 때만(우연히 같은 짧은 숫자를 피한다)."""
+    return len(re.sub(r"\D", "", raw or "").lstrip("0"))

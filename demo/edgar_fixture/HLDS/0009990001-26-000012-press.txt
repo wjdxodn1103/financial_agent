@@ -1,0 +1,5 @@
+Helios Data Systems (가상) Reports Third Quarter 2026 Results (가상 — 데모용 보도자료)
+
+Total revenue was $3,090 million, up 18.4% year over year. Data center revenue was $1,860 million, up 24.0% from $1,500 million a year ago, as two hyperscale customers delayed capacity orders. Operating income was $880 million and diluted EPS was $2.06.
+
+Management expects data center revenue growth to remain below 30% for the next two quarters while customers digest prior deployments.

@@ -3,7 +3,7 @@
 
  - PDF: 쪽마다 그림으로 VL 모델(.env CHAT_MODEL = nemotron-…-vl)에 읽힌다 — 글자층이 없는 PDF(Word 가 글자를 그림으로 저장한 것·스캔본)도 된다.
         표·차트마다 구성(머리 묶음·열·계열·축)·겉모양(색·선·정렬)·위치(box — 원본에서 그 부분만 잘라 보인다)를 받는다.
-        글자층이 있으면 그 쪽 글도 같이 준다(제목·이름 표기를 정확히). 앞 PAGE_MAX 쪽까지, 동시에 CONCURRENCY 쪽.
+        글자층이 있으면 그 쪽 글도 같이 준다(제목·이름 표기를 정확히). PAGE_MAX 쪽까지(넘으면 앞뒤 두 쪽 + 가운데 고르게 — pick_pages), 동시에 CONCURRENCY 쪽.
  - DOCX: Word 구조(제목 스타일·표·네이티브 차트·본문 글)를 글로 정리해 한 쪽처럼 준다(VL 없음, 위치 없음).
  - 마지막에 한 번 묶어(같은 모델, 글만) 섹션을 일반화하고 에셋마다 일반 이름·구성 한 줄·고유 이름 바꾸기(rename)·같은 꼴 합치기(same_as)를 받는다.
 실측(인디아 브리핑 7쪽, 글자층 없음): 쪽당 약 25~40초, 출력 상한이 작으면 빈 답 → 9000 + 한 번 다시. 위치(box)는 제목·출처 줄까지 대체로 맞다.
@@ -89,11 +89,12 @@ def _json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _ask(llm: Any, content: Any, max_tokens: int) -> Optional[Dict[str, Any]]:
-    """한 번 묻고, 빈 답·JSON 아님이면 출력 상한을 늘려 한 번 더(추론 모델은 상한이 작으면 빈 답을 낸다)."""
+async def _ask(llm: Any, content: Any, max_tokens: int, effort: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """한 번 묻고, 빈 답·JSON 아님이면 출력 상한을 늘려 한 번 더(추론 모델은 상한이 작으면 빈 답을 낸다).
+    effort = 생각 길이(기본 = 모델 기본). 쪽 읽기는 끄거나 줄이면 차트 종류·위치(box)·묶음 머리가 틀린다(2026-10-29 실측) — 기본으로 둔다."""
     for tokens in (max_tokens, int(max_tokens * 1.6)):
         try:
-            res = await llm.complete("chat", ChatParams(messages=[{"role": "user", "content": content}], temperature=0.1, max_tokens=tokens, timeout_s=240, reasoning_effort="low"))
+            res = await llm.complete("chat", ChatParams(messages=[{"role": "user", "content": content}], temperature=0.1, max_tokens=tokens, timeout_s=240, reasoning_effort=effort))
         except Exception:  # noqa: BLE001 — 그 쪽은 건너뛴다
             logger.exception("format analysis call failed")
             continue
@@ -105,16 +106,27 @@ async def _ask(llm: Any, content: Any, max_tokens: int) -> Optional[Dict[str, An
 
 # ── PDF: 쪽 그림 → VL ─────────────────────────────────────────────────────
 
+def pick_pages(total: int, limit: int = PAGE_MAX) -> List[int]:
+    """읽을 쪽(0부터) — limit 쪽 이하면 전부. 넘으면 앞 두 쪽(표지·요약)·뒤 두 쪽(재무표·고지) + 가운데를 고르게 —
+    앞쪽만 읽으면 뒤의 장(투자포인트·밸류에이션·리스크)이 양식에서 빠진다(기업분석 27쪽 샘플)."""
+    if total <= limit:
+        return list(range(total))
+    ends = [0, 1, total - 2, total - 1]
+    n = limit - len(ends)
+    lo, hi = 2, total - 3
+    mid = [lo + round(k * (hi - lo) / (n - 1)) for k in range(n)] if n > 1 else [lo]
+    return sorted(set(ends + mid))
+
+
 def pdf_pages(path: str | Path) -> List[Dict[str, Any]]:
-    """앞 PAGE_MAX 쪽 → [{page, png, text}] (text = 글자층, 없으면 빈 문자열)."""
+    """고른 쪽(pick_pages) → [{page, png, text}] (text = 글자층, 없으면 빈 문자열)."""
     import fitz  # PyMuPDF
 
     out: List[Dict[str, Any]] = []
     doc = fitz.open(str(path))
     try:
-        for i, page in enumerate(doc):
-            if i >= PAGE_MAX:
-                break
+        for i in pick_pages(len(doc)):
+            page = doc[i]
             out.append({"page": i + 1, "png": page.get_pixmap(matrix=fitz.Matrix(1.3, 1.3)).tobytes("png"), "text": re.sub(r"[ \t]+", " ", page.get_text("text") or "").strip()[:PAGE_TEXT_MAX]})
         total = len(doc)
     finally:
@@ -248,6 +260,15 @@ async def analyze_sample(path: str | Path, file_name: str, llm: Any, progress: O
     ext = Path(file_name).suffix.lower()
     stem = Path(file_name).stem
     if ext == ".pdf":
+        # 글자층이 있는 PDF — 레이아웃(글꼴·색·좌표·표 칸)으로 틀을 뽑는다(양식 2.0, VL 없음·LLM 은 일반화 한 번). 그림 PDF 만 아래 VL 경로
+        from app.templates_import.blueprint import build_blueprint
+
+        got = await build_blueprint(str(path), file_name, llm)
+        if got is not None:
+            if progress:
+                await progress(1, 1)
+            got["name"] = got.get("name") or stem
+            return got
         pages = await asyncio.to_thread(pdf_pages, path)
         if not pages:
             raise ValueError("PDF 에 쪽이 없습니다.")

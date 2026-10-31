@@ -191,12 +191,13 @@ def meta(session: SessionDep):
         "roles": [{"id": r, "label": ROLE_KO[r]} for r in ROLES],
         "users": [user_view(u) for u in Repo(session).users()],
         "connectors": {"dart": bool(config.DART_API_KEY), "edgar": bool(config.SEC_USER_AGENT), "ecos": bool(config.ECOS_API_KEY)},
+        "admins": config.ADMIN_USER_IDS,
     }
 
 
 @router.get("/me")
 def me(user: UserDep):
-    return user_view(user)
+    return {**user_view(user), "isAdmin": user.id in config.ADMIN_USER_IDS}
 
 
 # ── 워크스페이스 ──────────────────────────────────────────────────────
@@ -413,8 +414,14 @@ def document_chunks(workspace_id: str, doc_id: str, user: UserDep, session: Sess
 
 
 @router.get("/workspaces/{workspace_id}/documents/{doc_id}/chunk")
-def document_chunk(workspace_id: str, doc_id: str, user: UserDep, session: SessionDep, id: str = Query(...)):
-    return DocumentService(session).chunk(workspace_id, user, doc_id, id)
+def document_chunk(workspace_id: str, doc_id: str, user: UserDep, session: SessionDep, id: str = Query(...), quote: Optional[str] = Query(default=None, max_length=1000)):
+    """근거 문단 + 앞뒤. quote(그 문단을 인용한 문장)를 주면 hits = 문장 속 금액·비율과 같은 표 칸(근거 카드가 그 행만 표로 보인다)."""
+    out = DocumentService(session).chunk(workspace_id, user, doc_id, id)
+    if quote:
+        from app.docs.source_view import match_cells
+
+        out["hits"] = match_cells(out.get("chunk"), quote)
+    return out
 
 
 class EvidenceBody(BaseModel):
@@ -433,16 +440,23 @@ def enrich_document(workspace_id: str, doc_id: str, user: UserDep, session: Sess
 
 
 @router.get("/workspaces/{workspace_id}/documents/{doc_id}/locate")
-def document_locate(workspace_id: str, doc_id: str, user: UserDep, session: SessionDep, chunk: Optional[str] = Query(default=None), cell: Optional[str] = Query(default=None)):
-    """원문 확인 — 가공한 값(chunk·cell=행,열)이 원본 파일의 어디인지 원본을 다시 읽어서(PDF 쪽·엑셀 칸·워드 문단·글 줄)."""
+def document_locate(workspace_id: str, doc_id: str, user: UserDep, session: SessionDep, chunk: Optional[str] = Query(default=None), cell: Optional[str] = Query(default=None),
+                    quote: Optional[str] = Query(default=None, max_length=1000)):
+    """원문 확인 — 가공한 값(chunk·cell=행,열)이 원본 파일의 어디인지 원본을 다시 읽어서(PDF 쪽·엑셀 칸·워드 문단·글 줄·연결 스냅샷 표).
+    quote = 그 문단을 인용한 문장(근거 카드에서 열 때) — 연결 스냅샷 표에서 문장 속 금액과 같은 칸을 칠한다."""
     from app.docs.source_view import locate
+
+    from app.anchors import resolve
 
     DocumentService(session).source_file(workspace_id, user, doc_id)  # 읽을 수 있는 자료인가
     rc = tuple(int(x) for x in cell.split(",")[:2]) if cell and re.fullmatch(r"\d+,\d+", cell) else None
+    # 근거 고정 — 저장 때 얼려 둔 글자·값으로 지금 원문의 같은 자리를 다시 찾는다(문단 id 가 옮겨 갔으면 relocated)
+    r = resolve(doc_id, chunk, rc)
     try:
-        return locate(doc_id, chunk, rc)  # type: ignore[arg-type]
+        out = locate(doc_id, r["chunk"], tuple(r["cell"]) if r["cell"] else None, quote)  # type: ignore[arg-type]
     except FileNotFoundError as e:
         return JSONResponse(status_code=404, content={"message": str(e)})
+    return {**out, "anchorStatus": r["status"], "pinned": r["pinned"]}
 
 
 @router.get("/workspaces/{workspace_id}/documents/{doc_id}/page/{page_no}.png")
@@ -563,6 +577,45 @@ async def dart_companies(workspace_id: str, user: UserDep, session: SessionDep, 
 @router.post("/workspaces/{workspace_id}/connectors/dart/financials")
 async def dart_financials(workspace_id: str, body: DartFetchBody, user: UserDep, session: SessionDep):
     return await run_in_threadpool(ConnectorService(session).dart_financials, workspace_id, user, body.corp_code, body.corp_name, body.year, body.report, body.fs)
+
+
+class DartOverviewBody(BaseModel):
+    corp_code: str = Field(alias="corpCode")
+    corp_name: str = Field(alias="corpName")
+    days: int = 365
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post("/workspaces/{workspace_id}/connectors/dart/overview")
+async def dart_overview(workspace_id: str, body: DartOverviewBody, user: UserDep, session: SessionDep):
+    """기업개황 + 최근 공시 목록(제목·접수일·제출인·원문 링크) 스냅샷."""
+    return await run_in_threadpool(ConnectorService(session).dart_overview, workspace_id, user, body.corp_code, body.corp_name, body.days)
+
+
+class DartBusinessBody(BaseModel):
+    corp_code: str = Field(alias="corpCode")
+    corp_name: str = Field(alias="corpName")
+    year: Optional[int] = None
+    report: str = "annual"
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post("/workspaces/{workspace_id}/connectors/dart/business")
+async def dart_business(workspace_id: str, body: DartBusinessBody, user: UserDep, session: SessionDep):
+    """정기보고서 본문(회사 개요·사업의 내용·경영진단·주주·임직원 절) 스냅샷 — year 를 비우면 가장 최근 보고서."""
+    return await run_in_threadpool(ConnectorService(session).dart_business, workspace_id, user, body.corp_code, body.corp_name, body.year, body.report)
+
+
+class PriceSnapshotBody(BaseModel):
+    ticker: str
+    name: str
+    days: int = 365
+
+
+@router.post("/workspaces/{workspace_id}/connectors/prices/snapshot")
+async def prices_snapshot(workspace_id: str, body: PriceSnapshotBody, user: UserDep, session: SessionDep):
+    """사내 공용 일봉 → 주가 요약·월말 종가 스냅샷(워크스페이스 자료)."""
+    return await run_in_threadpool(ConnectorService(session).prices_snapshot, workspace_id, user, body.ticker, body.name, body.days)
 
 
 @router.get("/workspaces/{workspace_id}/connectors/edgar/companies")

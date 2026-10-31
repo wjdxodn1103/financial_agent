@@ -6,10 +6,12 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Database, FileText, FolderOpen, Loader2, MessageSquare, Save, Trash2, X } from "lucide-react";
+import { Database, FileText, FolderOpen, Loader2, MessageSquare, Save, Trash2, X, Repeat } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { RoutineDialog } from "../../../routines/RoutineDialog";
+import { FEATURES } from "../../../workspace/features";
 import { listReports } from "../../../workspace/api";
 import { useWorkspace } from "../../../workspace/context";
 import { deleteSession } from "../../api";
@@ -164,6 +166,9 @@ export function TaskButtons() {
   const openSettings = useSetAtom(dataSettingsOpenAtom);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [routining, setRoutining] = useState(false);
+  const session = useAtomValue(sessionAtom);
+  const hasDoc = useAtomValue(hasDocAtom);
   const saveRef = useRef<HTMLDivElement>(null);
   return (
     <div className="flex min-w-0 items-center gap-0.5">
@@ -186,7 +191,20 @@ export function TaskButtons() {
           {saving && <SavePopover anchor={saveRef} onClose={() => setSaving(false)} />}
         </div>
       )}
+      {canChat && FEATURES.routines && hasDoc && (
+        <button type="button" onClick={() => setRoutining(true)} className={btn}>
+          <Repeat className="size-4 text-neutral-500" aria-hidden />
+          루틴으로 저장
+        </button>
+      )}
       {loading && <LoadDialog onClose={() => setLoading(false)} />}
+      {routining && session && (
+        <RoutineDialog
+          initial={{ name: session.setup?.title || "", formatId: session.reportType, schedule: { every: "weekdays", time: "07:00" }, recipients: { all: true }, source: { kind: "task", sessionId: session.id } }}
+          onClose={() => setRoutining(false)}
+          onSaved={() => setRoutining(false)}
+        />
+      )}
     </div>
   );
 }

@@ -24,6 +24,7 @@ from app.config import BACKEND_DIR, TEMPLATE_DIR
 from app.db import Membership, Repo, ReportSession, ReportTemplate, User, iso, utcnow
 from app.formats.registry import label
 from app.ids import id36
+from app.templates_import.blueprint_edit import apply_outline, preview_blocks
 from app.templates_import.forms import clean_assets
 
 
@@ -188,6 +189,9 @@ def _row_view(row: ReportTemplate, user: User, m: Optional[Membership], names: D
         "style": (row.spec or {}).get("style") or "",
         "sections": _sections_of(row),
         "assets": (row.spec or {}).get("assets") or [],
+        "blueprint": (row.spec or {}).get("blueprint"),
+        # 양식 2.0 — 표·차트 양식마다 샘플 값으로 채운 미리보기 블록(문서 화면과 같은 모양)
+        **({"previews": preview_blocks((row.spec or {}).get("blueprint"))} if (row.spec or {}).get("blueprint") else {}),
         "updatedAt": iso(row.updated_at),
         "uses": (use["every"] if row.scope == "company" else use["here"]).get(tid, 0),
         "lastUsed": iso(use["last"][tid]) if tid in use["last"] else None,
@@ -303,9 +307,15 @@ def update_format(session: Session, workspace_id: str, user: User, type_id: str,
     if not _can_change(row, user, m):
         raise HTTPException(403, "양식은 만든 사람이나 관리자만 고칩니다.")
     spec = copy.deepcopy(row.spec or {})
-    if "sections" in body:
+    # 양식 2.0 틀이 있으면 구성은 틀(장·소주제 — outline)이 정한다. 옛 화면·도구용 섹션·에셋은 틀에서 다시 만든다(blueprint.to_v1)
+    if "outline" in body and spec.get("blueprint"):
+        from app.templates_import.blueprint import to_v1
+
+        spec["blueprint"] = apply_outline(spec["blueprint"], body["outline"])
+        spec["sections"], spec["assets"] = to_v1(spec["blueprint"])
+    if "sections" in body and not spec.get("blueprint"):
         spec["sections"] = clean_sections(session, workspace_id, user, body["sections"], [s["id"] for s in _sections_of(row)])
-    if spec.get("assets") or "assets" in body:
+    if (spec.get("assets") or "assets" in body) and not ("outline" in body and spec.get("blueprint")):
         spec["assets"] = clean_assets(body.get("assets"), spec.get("assets") or [], [s["id"] for s in spec.get("sections") or []])
     if "desc" in body:
         spec["desc"] = str(body.get("desc") or "").strip()[:300]
@@ -336,6 +346,8 @@ def create_from_proposal(session: Session, workspace_id: str, user: User, body: 
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(sample, dest)
     rt.spec = {"desc": str(body.get("desc") or "").strip()[:300], "style": str(body.get("style") or "").strip()[:1200], "sections": sections, "assets": assets, "sampleFile": f"formats/{rt.id}/{dest.name}", **({"draft": True} if draft else {})}
+    if isinstance(body.get("blueprint"), dict) and body["blueprint"].get("version") == 2:
+        rt.spec["blueprint"] = body["blueprint"]  # 양식 2.0 틀 — 문서를 만들 때 doc["layout"] 으로 복사된다(agent/session.seed_sections)
     session.add(rt)
     session.commit()
     _ws, m = require_member(session, workspace_id, user)
@@ -383,6 +395,11 @@ def asset_image(session: Session, workspace_id: str, user: User, type_id: str, a
     row = _format_row(session, type_id)
     a = next((x for x in (row.spec or {}).get("assets") or [] if x.get("id") == asset_id), None)
     src = (a or {}).get("source") or {}
+    f = (((row.spec or {}).get("blueprint") or {}).get("forms") or {}).get(asset_id)
+    if not (a and src.get("box")) and f and f.get("bbox") and f.get("page"):
+        # 양식 2.0 틀의 표·그림 양식(차트·그림 자리 포함) — 원본 쪽 좌표(pt)를 쪽 크기로 나눈다(A4 기준, 실제 쪽 크기는 아래에서 곱한다)
+        x0, y0, x1, y1 = f["bbox"]
+        a, src = f, {"page": f["page"], "box": [x0 / 595.32, max(0.0, y0 - 14) / 841.92, x1 / 595.32, y1 / 841.92]}
     if not a or not src.get("box") or not src.get("page") or p.suffix.lower() != ".pdf":
         raise HTTPException(404, "원본 위치가 없습니다.")
     doc = fitz.open(str(p))

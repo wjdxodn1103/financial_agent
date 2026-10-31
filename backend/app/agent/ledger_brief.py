@@ -14,11 +14,12 @@ from app.docs.citations import tokens
 from app.docs.search_tool import SourceBook
 from app.docs.store import load_chunks
 from app.ledger.calc import CalcError, evaluate, readable, refs_in
-from app.ledger.figures import Figure, workspace_ledger
-from app.ledger.numbers import find_amounts, human_amount, is_rounding_of, korean_amount, same_value
+from app.ledger.figures import Figure, metric_key, workspace_ledger
+from app.ledger.numbers import find_amounts, human_amount, is_rounding_of, korean_amount, loss_variants, same_value, scale_slip, sig_digits
 from app.ledger.service import doc_labels
 
 BRIEF_MAX = 28
+_GENERIC = {"손실", "이익", "합계", "총계", "기타"}  # 지표 이름 꼬리 — 겹쳐도 약하게 친다
 _TOKEN = re.compile(r"[A-Za-z]{2,}|[가-힣]{2,}|\d{4}")
 
 CALC_TOOL_NAME = "calculate"
@@ -103,14 +104,19 @@ def select_figures(doc_ids: Sequence[str], choices: Dict[str, Dict[str, Any]], q
     lb.figures = led["figures"]
     by_fid = {f["fid"]: f for f in led["figures"]}
     want = set().union(*(_terms(q) for q in queries)) if queries else set()
+    # 질의에 지표 이름이 그대로 있으면(매출액·영업이익) 그 지표가 먼저 — 연도·'손실' 같은 낱말만 겹치는 줄(기본주당이익(손실) 2025)이
+    # 정확히 말한 지표를 브리프 밖으로 밀어내지 않게(2026-10-30 에스비비테크: 연간 매출액이 빠졌다)
+    keys = {metric_key(t) for t in want if not t.isdigit()}
     scored: List[Tuple[float, Dict[str, Any]]] = []
     for g in led["groups"]:
-        terms = _terms(f"{g['metric']} {g['metricKey']} {g['period']}")
-        overlap = len(terms & want)
-        if not overlap and want:
+        m_over = _terms(f"{g['metric']} {g['metricKey']}") & want
+        p_over = _terms(g["period"]) & want
+        if not (m_over or p_over) and want:
             continue
+        exact = 3.0 if g["metricKey"] in keys else 0.0
+        score = exact + 2 * len(m_over - _GENERIC) + 0.5 * len(m_over & _GENERIC) + 0.5 * len(p_over)
         bonus = 0.5 if g.get("chosen") else (0.2 if g["documents"] > 1 and not g["conflict"] else 0.0)
-        scored.append((overlap + bonus, g))
+        scored.append((score + bonus, g))
     scored.sort(key=lambda x: (-x[0], x[1]["metric"], x[1]["periodKey"]))
     lines: List[str] = []
     for _s, g in scored[:BRIEF_MAX]:
@@ -169,7 +175,9 @@ def precompute_changes(groups: Sequence[Dict[str, Any]], by_fid: Dict[str, Figur
         return lb.add({**f, "_s": s_no}), s_no
 
     out: List[str] = []
-    for (mk, basis, pct, y), g in sorted(idx.items(), key=lambda kv: (kv[1]["metric"], -kv[0][3])):
+    # 관련도 순(들어온 groups 순서 = select_figures 점수 순) — 가나다순이면 상한이 '계속영업기본주당이익'·'금융리스부채'로 차 버린다
+    rank = {id(g): i for i, g in enumerate(groups)}
+    for (mk, basis, pct, y), g in sorted(idx.items(), key=lambda kv: (rank.get(id(kv[1]), 1 << 30), -kv[0][3])):
         prev = idx.get((mk, basis, pct, y - 1))
         old = rep(prev) if prev else None
         if old is None:
@@ -191,6 +199,13 @@ def precompute_changes(groups: Sequence[Dict[str, Any]], by_fid: Dict[str, Figur
                 word = "상승" if value > 0 else "하락" if value < 0 else "변화 없음"
                 out.append(f"[계산] {label}: {calc['display']} {word} (= {new.get('display') or new['raw']} − {old.get('display') or old['raw']}){who} {_cites(sn, so)}")
             else:
+                nv, ov = float(new.get("abs") if new.get("abs") is not None else new["value"]), float(old.get("abs") if old.get("abs") is not None else old["value"])
+                if (nv < 0) != (ov < 0) and nv != 0 and ov != 0:
+                    # 부호가 바뀌면 증감률은 뜻이 없다 — 전환으로만
+                    out.append(f"[참고] {label}: {'적자 전환' if nv < 0 else '흑자 전환'} ({old.get('display') or old['raw']} → {new.get('display') or new['raw']}) — 증감률은 쓰지 않는다{who} {_cites(sn, so)}")
+                    if len(out) >= CHANGES_MAX:
+                        return out
+                    continue
                 before = len(lb.calcs)
                 lb.calculate({"expression": f"growth({kn}, {ko})", "label": label})
                 if len(lb.calcs) == before:
@@ -198,7 +213,10 @@ def precompute_changes(groups: Sequence[Dict[str, Any]], by_fid: Dict[str, Figur
                 calc = lb.calcs[-1]
                 calc["auto"] = True
                 calc["display"] = f"{abs(calc['value']):.1f}%"
-                word = "증가" if calc["value"] > 0 else "감소" if calc["value"] < 0 else "변화 없음"
+                if nv < 0 and ov < 0:  # 손실끼리 — 크기가 커지면 '손실 확대'(growth 값이 + 여도 '증가'라고 쓰면 거꾸로 읽힌다)
+                    word = "손실 확대" if calc["value"] > 0 else "손실 축소" if calc["value"] < 0 else "변화 없음"
+                else:
+                    word = "증가" if calc["value"] > 0 else "감소" if calc["value"] < 0 else "변화 없음"
                 out.append(f"[계산] {label}: {calc['display']} {word} (= {new.get('display') or new['raw']} ÷ {old.get('display') or old['raw']} − 1){who} {_cites(sn, so)}")
             if len(out) >= CHANGES_MAX:
                 return out
@@ -246,15 +264,17 @@ def number_checks(content: str, lb: LedgerBook, user_values: Sequence[str] = ())
     checked = 0
     matched = 0
     mismatched: List[str] = []
+    unit_suspect: List[str] = []
     user_text = " ".join(user_values)
     chunks: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-    def in_cited_text(a: Dict[str, Any], d: str, c: str) -> bool:
+    def in_cited_text(cands: List[Dict[str, Any]], d: str, c: str) -> bool:
         if d not in chunks:
             chunks[d] = {x.get("id"): x for x in load_chunks(d)}
         for b in find_amounts((chunks[d].get(c) or {}).get("text") or ""):
-            if bool(b["percent"]) == bool(a["percent"]) and (same_value(a["abs"], a["step"], b["abs"], b["step"]) or (not b.get("unit") and same_value(a["value"], 10 ** -a["decimals"], b["value"], 10 ** -b.get("decimals", 0)))):
-                return True
+            for a in cands:
+                if bool(b["percent"]) == bool(a["percent"]) and (same_value(a["abs"], a["step"], b["abs"], b["step"]) or (not b.get("unit") and same_value(a["value"], 10 ** -a["decimals"], b["value"], 10 ** -b.get("decimals", 0)))):
+                    return True
         return False
     for sent in re.split(r"(?<=[.!?。])\s+|\n+", content or ""):
         if not sent.strip():
@@ -263,11 +283,12 @@ def number_checks(content: str, lb: LedgerBook, user_values: Sequence[str] = ())
         has_cite = bool(tokens(sent))
         for a in find_amounts(plain):
             checked += 1
+            cands = loss_variants(a, plain)  # '영업손실 55.72억원' = 원장 −5,572,218,496
             ok = False
             for f in lb.figures:
                 if bool(f.get("percent")) != bool(a["percent"]):
                     continue
-                if same_value(a["abs"], a["step"], f["abs"], f["step"]) or (not f.get("unitKnown", True) and same_value(a["value"], 10 ** -a["decimals"], f["value"], 10 ** -f.get("decimals", 0))):
+                if any(same_value(c["abs"], c["step"], f["abs"], f["step"]) or (not f.get("unitKnown", True) and same_value(c["value"], 10 ** -c["decimals"], f["value"], 10 ** -f.get("decimals", 0))) for c in cands):
                     ok = True
                     break
             if not ok:
@@ -285,10 +306,21 @@ def number_checks(content: str, lb: LedgerBook, user_values: Sequence[str] = ())
             if not ok and a["raw"].replace(" ", "") in user_text.replace(" ", ""):
                 ok = True
             if not ok and has_cite:
-                ok = any(in_cited_text(a, d, c) for d, c in tokens(sent))
+                ok = any(in_cited_text(cands, d, c) for d, c in tokens(sent))
             if ok:
                 matched += 1
-            elif has_cite:
+                continue
+            if not a["percent"] and sig_digits(a["raw"]) >= 3:
+                # 단위 의심 — 유효 숫자(3자리 이상)는 원장·인용 문단의 '단위가 있는' 금액과 같은데 자릿수가 10^k 배 다르다(billion → 조·억 환산 실수 등)
+                pool = [(f.get("raw") or f.get("display") or "", f.get("abs")) for f in lb.figures if not f.get("percent") and f.get("abs") and f.get("unitKnown", True) and ((f.get("scale") or 1) > 1 or f.get("currency"))]
+                for d, c in tokens(sent):
+                    if d not in chunks:
+                        chunks[d] = {x.get("id"): x for x in load_chunks(d)}
+                    pool += [(b["raw"], b["abs"]) for b in find_amounts((chunks[d].get(c) or {}).get("text") or "") if not b["percent"] and b.get("unit")]
+                hit = next(((raw, k) for raw, v in pool for c in cands if v and (k := scale_slip(c["abs"], v))), None)
+                if hit:
+                    unit_suspect.append(f"{a['raw']} ↔ 원문 {hit[0]} (자릿수 10^{abs(hit[1])}배 차이)")
+            if has_cite:
                 where = re.sub(r"\s+", " ", plain).strip()[:120]
                 mismatched.append(f"{a['raw']} — {where}")
-    return {"checked": checked, "matched": matched, "mismatched": mismatched[:6]}
+    return {"checked": checked, "matched": matched, "mismatched": mismatched[:6], "unitSuspect": unit_suspect[:6]}

@@ -143,6 +143,9 @@ def build_from_doc(doc_id: str, chunk: str, spec: Optional[Dict[str, Any]] = Non
     data["period"] = None
     data["source"] = source_of(doc_id, t)
     data["sig"] = t["sig"]
+    from app.anchors import pin_table_cells
+
+    pin_table_cells(data)  # 옮긴 칸이 기댄 원문 칸을 지금 원문으로 얼린다
     return caption, data
 
 

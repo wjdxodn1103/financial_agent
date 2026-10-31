@@ -12,7 +12,7 @@ import { useAtomValue } from "jotai";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { canChatAtom, hasDocAtom, hasUserMessageAtom, loadErrorAtom, loadingAtom, modesAtom, panelsAtom, providerAtom, reportOwnerAtom, tablesAtom } from "../../atoms";
+import { canChatAtom, hasDocAtom, hasUserMessageAtom, loadErrorAtom, loadingAtom, modesAtom, panelsAtom, providerAtom, tablesAtom } from "../../atoms";
 import { useReportActions } from "../../hooks/useReportStudio";
 import { AssetPanel } from "../assets/AssetPanel";
 import { Composer } from "../chat/Composer";
@@ -21,6 +21,7 @@ import { Thread } from "../chat/Thread";
 import { LibraryPanel } from "../library/LibraryPanel";
 import { NumberPanel } from "../numbers/NumberPanel";
 import { ReportView } from "../report/ReportView";
+import { ReviewPanel } from "../review/ReviewPanel";
 import { CitationEvidence } from "../viewer/CitationEvidence";
 import { DocumentViewer } from "../viewer/DocumentViewer";
 import { FEATURES } from "../../../workspace/features";
@@ -138,19 +139,6 @@ function NoProviderCard() {
   );
 }
 
-/** 작성자가 아닌 멤버 — 에이전트 대화는 작성자의 것이라 보이지 않는다(대화는 개인, 기록은 공유) */
-function ReadOnlyNotice() {
-  const owner = useAtomValue(reportOwnerAtom);
-  return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="max-w-[440px] rounded-xl border border-neutral-200 bg-background-gray px-5 py-4 text-sm leading-6 text-text-secondary">
-        <p className="font-medium text-text-primary">{owner ? `${owner.name} ${owner.title}`.trim() : "작성자"}님의 리포트입니다.</p>
-        <p className="mt-1">본문과 근거(출처 문단)는 볼 수 있고, 에이전트와 나눈 대화는 작성자에게만 보입니다. 의견은 채널에 남기거나 검수로 전달해 주세요.</p>
-      </div>
-    </div>
-  );
-}
-
 export function Studio() {
   const actions = useReportActions();
   const loading = useAtomValue(loadingAtom);
@@ -191,7 +179,8 @@ export function Studio() {
       <TopBar />
       <div className="thin-scrollbar flex min-h-0 flex-1 overflow-x-auto">
         <main className="flex min-w-[380px] flex-1 basis-0 flex-col bg-white">
-          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">{!canChat ? <ReadOnlyNotice /> : hasUserMessage ? <Thread /> : <StartScreen composer={provider?.kind !== "none"} />}</div>
+          {/* 작성자가 아닌 멤버 — 에이전트 대화는 작성자의 것이라 보이지 않고(대화는 개인, 기록은 공유) 그 자리에 검토 목록 */}
+          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">{!canChat ? <ReviewPanel /> : hasUserMessage ? <Thread /> : <StartScreen composer={provider?.kind !== "none"} />}</div>
           {canChat && !hasUserMessage && provider?.kind === "none" && <NoProviderCard />}
           {canChat && hasUserMessage && (
             <>

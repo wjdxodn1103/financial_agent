@@ -14,7 +14,7 @@ import re
 import time
 import zipfile
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from xml.etree import ElementTree
 
 import httpx
@@ -240,3 +240,291 @@ def fetch_financials(corp_code: str, corp_name: str, year: int, report: str = "a
         basis=fs_ko,
     )
     return {**snap, "title": title}
+
+
+# ── 기업개황·최근 공시 목록 ──────────────────────────────────────────────
+
+CORP_CLS_KO = {"Y": "유가증권시장", "K": "코스닥", "N": "코넥스", "E": "기타"}
+
+
+def fetch_overview(corp_code: str, corp_name: str, days: int = 365) -> Dict[str, Any]:
+    """기업개황(company.json) + 최근 공시 목록(list.json) → 스냅샷 문서 하나. 공시마다 원문 링크(접수번호)를 칸에 둔다.
+    리포트의 '주요 공시·이벤트'가 이 표를 인용한다(공시 본문은 가져오지 않는다 — 제목·날짜·제출인만)."""
+    from datetime import timedelta
+
+    from app.docs.extract import table_text
+
+    key = _require_key()
+    try:
+        co = _http_get(f"{API}/company.json", {"crtfc_key": key, "corp_code": corp_code}).json()
+    except httpx.HTTPError as e:
+        raise ConnectorError("DART_UNREACHABLE", f"DART 에 연결하지 못했습니다: {e}", 502) from e
+    if str(co.get("status") or "") != "000":
+        code, msg = _STATUS.get(str(co.get("status")), ("DART_ERROR", f"DART 오류({co.get('status')}): {co.get('message') or ''}"))
+        raise ConnectorError(code, msg, 404 if code == "NO_DATA" else 409)
+    end = date.today()
+    bgn = end - timedelta(days=max(30, min(days, 1095)))
+    rows: List[Dict[str, Any]] = []
+    for page in range(1, 6):
+        j = _http_get(f"{API}/list.json", {"crtfc_key": key, "corp_code": corp_code, "bgn_de": bgn.strftime("%Y%m%d"), "end_de": end.strftime("%Y%m%d"),
+                                           "page_no": str(page), "page_count": "100"}).json()
+        st = str(j.get("status") or "")
+        if st == "013":  # 조회된 자료 없음
+            break
+        if st != "000":
+            code, msg = _STATUS.get(st, ("DART_ERROR", f"DART 오류({st}): {j.get('message') or ''}"))
+            raise ConnectorError(code, msg, 409)
+        rows += list(j.get("list") or [])
+        if page >= int(j.get("total_page") or 1):
+            break
+        time.sleep(0.2)
+
+    def d8(s: Any) -> str:
+        s = str(s or "")
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 else s
+
+    profile = [["항목", "내용"],
+               ["회사명", str(co.get("corp_name") or corp_name)], ["영문명", str(co.get("corp_name_eng") or "")],
+               ["종목코드", str(co.get("stock_code") or "")], ["시장", CORP_CLS_KO.get(str(co.get("corp_cls") or ""), str(co.get("corp_cls") or ""))],
+               ["대표자", str(co.get("ceo_nm") or "")], ["설립일", d8(co.get("est_dt"))], ["결산월", f"{co.get('acc_mt') or ''}월"],
+               ["업종코드", str(co.get("induty_code") or "")], ["주소", str(co.get("adres") or "")], ["홈페이지", str(co.get("hm_url") or "")]]
+    profile = [r for r in profile if r[1].strip(" 월")]
+    disc = [["접수일", "공시명", "제출인", "접수번호", "원문"]] + [
+        [d8(r.get("rcept_dt")), re.sub(r"\s+", " ", str(r.get("report_nm") or "")).strip(), str(r.get("flr_nm") or ""), str(r.get("rcept_no") or ""),
+         f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={r.get('rcept_no')}"] for r in rows]
+    paras: List[Dict[str, Any]] = [
+        {"page": None, "kind": "table", "rows": profile, "heading": f"{corp_name} 기업개황(DART)", "unit": None, "sheet": "기업개황"},
+        {"page": None, "kind": "table", "rows": disc, "heading": f"{corp_name} 최근 공시 목록 ({bgn.isoformat()}~{end.isoformat()}, {len(rows)}건)", "unit": None, "sheet": "공시 목록"},
+    ]
+    for p in paras:
+        p["text"] = table_text(p["rows"])
+    today = end.isoformat()
+    title = f"{corp_name} 기업개황·최근 공시 목록({today} 기준)"
+    snap = make_snapshot(
+        snapshot_id("dart", corp_code, "overview", today),
+        file_name=f"DART_{corp_name}_기업개황_공시목록_{today}.json",
+        file_type="DART",
+        paras=paras,
+        raw={"company": co, "list": rows},
+        card={"title": title, "docType": "공시 목록(DART)", "date": today, "issuer": "금융감독원 전자공시(DART)", "company": corp_name,
+              "oneLine": f"DART OpenAPI 에서 {today}에 가져온 기업개황과 최근 {len(rows)}건 공시(제목·접수일·제출인·원문 링크)"},
+        snapshot={"connector": "dart", "title": "DART 기업개황·공시 목록", "params": {"corpCode": corp_code, "corpName": corp_name, "days": days},
+                  "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "url": f"https://dart.fss.or.kr/dsab007/main.do?corpCode={corp_code}"},
+        figure_source="dart",
+    )
+    return {**snap, "title": title, "disclosures": len(rows)}
+
+
+# ── 정기보고서 본문(사업의 내용 등) ─────────────────────────────────────
+
+# 기업분석 리포트가 쓰는 절만 — 회사 개요·연혁·주식 총수, 사업의 내용 전부, 경영진단(예측정보 주의 제외), 주주, 임직원 현황.
+# 재무제표·주석(III)·감사(V)·이사회(VI)·계열사(IX)·대주주 거래(X)는 뺀다(재무제표는 fetch_financials 가 정확한 칸으로 가져온다).
+BODY_PARTS = {"I": ("1", "2", "4"), "II": None, "IV": ("2", "3", "4", "5", "6"), "VII": None, "VIII": ("1",)}
+BODY_PARA_CHARS = 1200
+CAPTION_CHARS = 80  # 표 위 이 길이 이하 줄(최대 2줄)은 표 제목·단위로 본다
+_ROMAN = re.compile(r"^\s*([IVX]+)\.\s")
+_NUM = re.compile(r"^\s*(\d+)\.\s")
+_UNIT = re.compile(r"단위\s*[:：]\s*([^\s,)]+)")
+
+
+def _text_of(el: Any) -> str:
+    return re.sub(r"\s+", " ", "".join(el.itertext())).strip()
+
+
+_NUMERIC = re.compile(r"[-+(]?[\d,.]+%?\)?|-")
+
+
+def _span(v: Any) -> int:
+    return int(v) if str(v or "").isdigit() and int(v) > 0 else 1
+
+
+def _table_rows(table: Any) -> List[List[str]]:
+    """TABLE → 행 목록. 칸 합치기(ROWSPAN·COLSPAN)를 풀어 열을 맞춘다.
+    머리 행(TH 만 있는 앞쪽 행)이 여러 줄이면 열마다 위→아래 글을 이어 한 줄로('소유주식수 및 지분율 기 말 지분율') — 합친 머리를 납작하게 펴면 열이 밀려
+    '최대주주 지분율'을 다른 열 값으로 읽는다(2026-10-30 실측). 본문 칸의 합치기는 글(항목 이름)만 되풀이하고 숫자는 비운다(같은 값이 두 번 세지지 않게)."""
+    grid: List[List[str]] = []
+    heads: List[bool] = []
+    carry: Dict[int, Tuple[str, int]] = {}  # 열 → (아래 행에 채울 글, 남은 행 수)
+    for tr in table.iter("TR"):
+        tds = [td for td in tr if td.tag in ("TD", "TH", "TE", "TU")]
+        is_head = bool(tds) and (tr.getparent().tag == "THEAD" or all(td.tag == "TH" for td in tds))
+        row: List[str] = []
+
+        def fill_carry() -> None:
+            while len(row) in carry:
+                c = len(row)
+                text, left = carry[c]
+                row.append(text)
+                if left <= 1:
+                    del carry[c]
+                else:
+                    carry[c] = (text, left - 1)
+
+        for td in tds:
+            fill_carry()
+            text = _text_of(td)
+            rs = _span(td.get("ROWSPAN"))
+            for k in range(_span(td.get("COLSPAN"))):
+                c = len(row)
+                row.append(text if k == 0 or is_head else "")
+                if rs > 1:
+                    keep = (k == 0 or is_head) and (is_head or not _NUMERIC.fullmatch(text))
+                    carry[c] = (text if keep else "", rs - 1)
+        fill_carry()
+        grid.append(row)
+        heads.append(is_head)
+    n = 0
+    while n < len(grid) and heads[n]:
+        n += 1
+    if n > 1:
+        width = max(len(r) for r in grid[:n])
+        merged = [" ".join(dict.fromkeys(grid[r][c] for r in range(n) if c < len(grid[r]) and grid[r][c])) for c in range(width)]
+        grid = [merged] + grid[n:]
+    return [r for r in grid if any(r)]
+
+
+def _wanted(path: List[str]) -> bool:
+    """heading 경로(['II. 사업의 내용', '2. 주요 제품 및 서비스']) 가 BODY_PARTS 에 드는가."""
+    if not path:
+        return False
+    m = _ROMAN.match(path[0])
+    if not m or m.group(1) not in BODY_PARTS:
+        return False
+    subs = BODY_PARTS[m.group(1)]
+    if subs is None or len(path) < 2:
+        return subs is None
+    n = _NUM.match(path[1])
+    return bool(n and n.group(1) in subs)
+
+
+def _body_paras(xml: bytes, corp_name: str) -> List[Dict[str, Any]]:
+    """heading = '회사 · 장 > 절' — 검색(제목+본문 임베딩)이 '○○ 주요 제품' 질의에서 다른 자료의 회사 이름 제목에 밀리지 않게."""
+    from lxml import etree
+
+    from app.docs.extract import table_text
+
+    root = etree.fromstring(xml, parser=etree.XMLParser(recover=True, huge_tree=True))
+    paras: List[Dict[str, Any]] = []
+    buf: List[str] = []
+    path: List[str] = []
+
+    def head() -> str:
+        return f"{corp_name} · {' > '.join(path)}"
+
+    def flush() -> None:
+        if buf and _wanted(path):
+            paras.append({"page": None, "kind": "prose", "text": "\n".join(buf), "heading": head(), "heading_path": list(path)})
+        buf.clear()
+
+    def walk(el: Any, depth: int) -> None:
+        for ch in el:
+            tag = ch.tag if isinstance(ch.tag, str) else ""
+            if tag.startswith("SECTION-"):
+                flush()
+                title = ch.find("TITLE")
+                level = int(tag.split("-")[1])
+                del path[level - 1:]
+                path.append(_text_of(title) if title is not None else "")
+                walk(ch, level)
+                flush()
+                del path[level - 1:]
+            elif tag == "TITLE":
+                continue
+            elif tag == "P":
+                t = _text_of(ch)
+                if t:
+                    if sum(len(x) for x in buf) + len(t) > BODY_PARA_CHARS:
+                        flush()
+                    buf.append(t)
+            elif tag == "TABLE":
+                if not _wanted(path):
+                    continue
+                rows = _table_rows(ch)
+                if len(rows) >= 2 and max(len(r) for r in rows) >= 2:
+                    # 표 바로 위 짧은 줄(표 제목 '가. 최대주주 … 현황'·'(단위 : 주, %)')은 표의 머리로 옮긴다 — 표 칸만으로는 무슨 표인지 검색이 모른다
+                    cap: List[str] = []
+                    while buf and len(buf[-1]) <= CAPTION_CHARS and len(cap) < 2:
+                        cap.insert(0, buf.pop())
+                    unit = next((m.group(1) for m in map(_UNIT.search, cap) if m), None)
+                    flush()
+                    title = " ".join(cap)
+                    paras.append({"page": None, "kind": "table", "rows": rows, "text": table_text(rows), "heading": head() + (f" · {title}" if title else ""),
+                                  "heading_path": list(path), "unit": unit, "sheet": path[-1][:30]})
+                elif rows:  # 한 칸 표(상자 글) — 본문으로
+                    buf.extend(" ".join(c for c in r if c) for r in rows)
+            elif tag in ("TABLE-GROUP", "LIBRARY", "BODY", "COVER", "CORRECTION"):
+                walk(ch, depth)
+
+    walk(root, 0)
+    flush()
+    return paras
+
+
+def _periodic_reports(key: str, corp_code: str, since: date) -> List[Dict[str, Any]]:
+    j = _http_get(f"{API}/list.json", {"crtfc_key": key, "corp_code": corp_code, "bgn_de": since.strftime("%Y%m%d"), "end_de": date.today().strftime("%Y%m%d"),
+                                       "pblntf_ty": "A", "page_count": "100"}).json()
+    st = str(j.get("status") or "")
+    if st == "013":
+        return []
+    if st != "000":
+        code, msg = _STATUS.get(st, ("DART_ERROR", f"DART 오류({st}): {j.get('message') or ''}"))
+        raise ConnectorError(code, msg, 409)
+    return list(j.get("list") or [])
+
+
+def fetch_business(corp_code: str, corp_name: str, year: Optional[int] = None, report: str = "annual") -> Dict[str, Any]:
+    """정기보고서 본문(document.xml) → 회사 개요·연혁·주식 총수·사업의 내용·경영진단·주주·임직원 절만 스냅샷 문서로.
+    year 를 비우면 가장 최근 그 종류 보고서. 문단은 원문 그대로(요약·번역 없음), 표는 칸 구조로."""
+    key = _require_key()
+    if report not in REPORTS:
+        raise ConnectorError("DART_BAD_PARAM", "보고서는 사업보고서·반기·1분기·3분기 가운데 하나여야 합니다.", 400)
+    ko = REPORTS[report]["ko"].replace("1분기", "분기").replace("3분기", "분기")
+    month = {"annual": "12", "half": "06", "q1": "03", "q3": "09"}[report]
+    since = date(year, 1, 1) if year else date(date.today().year - 2, 1, 1)  # Y년 사업보고서는 Y+1년 3월께 접수
+    try:
+        rows = _periodic_reports(key, corp_code, since)
+    except httpx.HTTPError as e:
+        raise ConnectorError("DART_UNREACHABLE", f"DART 에 연결하지 못했습니다: {e}", 502) from e
+    # 정정 보고서([기재정정]) 도 같은 기간이면 최신 접수가 먼저 온다
+    want = [r for r in rows if ko in str(r.get("report_nm") or "") and f".{month})" in str(r.get("report_nm") or "")
+            and (year is None or f"({year}.{month})" in str(r.get("report_nm") or ""))]
+    if not want:
+        raise ConnectorError("NO_DATA", f"DART 에 {corp_name} {year or '최근'} {REPORTS[report]['ko']} 공시가 없습니다.", 404)
+    rcept_no = str(want[0]["rcept_no"])
+    report_nm = re.sub(r"\s+", " ", str(want[0].get("report_nm") or "")).strip()
+    try:
+        res = _http_get(f"{API}/document.xml", {"crtfc_key": key, "rcept_no": rcept_no}, timeout=120.0)
+    except httpx.HTTPError as e:
+        raise ConnectorError("DART_UNREACHABLE", f"DART 에 연결하지 못했습니다: {e}", 502) from e
+    if res.status_code != 200 or not res.content.startswith(b"PK"):
+        raise ConnectorError("DART_ERROR", f"DART 원문을 받지 못했습니다(HTTP {res.status_code}).", 502)
+    z = zipfile.ZipFile(io.BytesIO(res.content))
+    main = next((n for n in z.namelist() if n == f"{rcept_no}.xml"), None) or max(z.namelist(), key=lambda n: z.getinfo(n).file_size)
+    paras = _body_paras(z.read(main), corp_name)
+    if not paras:
+        raise ConnectorError("NO_DATA", "DART 원문에서 사업의 내용 절을 찾지 못했습니다.", 404)
+    today = date.today().isoformat()
+    title = f"{corp_name} {report_nm} 본문(사업의 내용·주주 등)"
+    # 본문 표의 기간 머리 '제26기' → 연도(사업보고서는 가장 큰 기수 = 보고서 연도) — 제품별 매출·연구개발비가 연도 칸으로 원장에 든다
+    period_map: Dict[str, str] = {}
+    fy = re.search(r"\((\d{4})\.\d{2}\)", report_nm)
+    terms = sorted({int(m) for p in paras if p["kind"] == "table" for c in p["rows"][0] for m in re.findall(r"제\s*(\d+)\s*기", c)})
+    if report == "annual" and fy and terms:
+        for n in terms:
+            for label in (f"제{n}기", f"제 {n} 기", f"제{n} 기"):
+                period_map[label] = str(int(fy.group(1)) - (terms[-1] - n))
+    snap = make_snapshot(
+        snapshot_id("dart", corp_code, "body", rcept_no),
+        file_name=f"DART_{corp_name}_{report_nm}_본문.json",
+        file_type="DART",
+        paras=paras,
+        raw={"rceptNo": rcept_no, "reportName": report_nm, "sections": sorted({" > ".join(p["heading_path"][:2]) for p in paras})},
+        card={"title": title, "docType": "공시 본문(DART)", "date": f"{rcept_no[:4]}-{rcept_no[4:6]}-{rcept_no[6:8]}", "issuer": "금융감독원 전자공시(DART)",
+              "company": corp_name, "oneLine": f"{report_nm} 원문 중 회사의 개요·사업의 내용·경영진단·주주·임직원 절({len(paras)}개 문단·표, {today}에 가져옴)"},
+        snapshot={"connector": "dart", "title": "DART 정기보고서 본문", "params": {"corpCode": corp_code, "corpName": corp_name, "year": year, "report": report},
+                  "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rceptNo": rcept_no,
+                  "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"},
+        figure_source="dart_body",
+        period_map=period_map or None,
+    )
+    return {**snap, "title": title, "paragraphs": len(paras)}

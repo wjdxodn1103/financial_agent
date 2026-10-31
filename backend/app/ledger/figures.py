@@ -43,6 +43,7 @@ METRIC_ALIASES: Dict[str, List[str]] = {
     "ROA": ["roa", "총자산이익률"],
     "PER": ["per", "주가수익비율"],
     "PBR": ["pbr", "주가순자산비율"],
+    "주가": ["주가", "종가", "월말종가", "closeprice", "closingprice"],  # 주가 자료(월말 종가) ↔ 양식 차트 계열 '주가'
 }
 _ALIAS_TO_KEY: Dict[str, str] = {a: k for k, al in METRIC_ALIASES.items() for a in al}
 _PAREN = re.compile(r"\(([^)]*)\)|（[^）]*）|\[[^\]]*\]")
@@ -85,10 +86,48 @@ def _yyyy(s: str) -> str:
     return s if len(s) == 4 else ("20" + s if int(s) < 70 else "19" + s)
 
 
+_SEC_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+_SEC_DUR = re.compile(r"(3|three|6|six|9|nine|12|twelve)\s+months?\s+ended\s+([A-Za-z]{3})[a-z]*\.?\s+\d{1,2},?\s+(\d{4})", re.I)
+
+
+def _sec_period(t: str) -> Optional[str]:
+    """SEC 재무제표 엑셀 머리('3 Months Ended Sep. 30, 2026') → 2026Q3 · 6개월 → 2026H1 · 9개월 → 2026M9(누적) · 12개월 → 2026.
+    역년 기준 달로 분기를 정한다(회계연도가 다른 회사는 회계 분기와 다를 수 있다)."""
+    m = _SEC_DUR.search(t)
+    if not m:
+        return None
+    n = {"3": 3, "three": 3, "6": 6, "six": 6, "9": 9, "nine": 9, "12": 12, "twelve": 12}[m.group(1).lower()]
+    mon = _SEC_MONTHS.get(m.group(2)[:3].lower())
+    y = m.group(3)
+    if not mon:
+        return None
+    if n == 3:
+        return f"{y}Q{(mon - 1) // 3 + 1}"
+    if n == 6:
+        return f"{y}H1" if mon <= 6 else f"{y}H2"
+    if n == 9:
+        return f"{y}M9"
+    return y
+
+
+_YM = re.compile(r"^((?:19|20)\d{2})-(0[1-9]|1[0-2])(?:-(0[1-9]|[12]\d|3[01]))?$")  # 2025-10 · 2026-05-13 (ISO 꼴만 — '2024.12'는 결산 연도로 둔다)
+_YM_KO = re.compile(r"^((?:19|20)\d{2})\s*년\s*(\d{1,2})\s*월$")
+
+
 def period_key(label: str) -> str:
     t = (label or "").strip()
     if not t:
         return ""
+    # 월·일 행(월말 종가 2025-10, 일봉 2026-05-13)을 연도로 접으면 같은 해의 다른 값이 '자료 간 불일치'가 된다
+    m = _YM.match(t)
+    if m:
+        return t
+    m = _YM_KO.match(t)
+    if m and 1 <= int(m.group(2)) <= 12:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    sec = _sec_period(t)
+    if sec:
+        return sec
     for rx in _Q:
         m = rx.search(t)
         if m:
@@ -149,6 +188,8 @@ def _unit_for(label: str, header: str, cell_pct: bool, table_unit: Unit) -> Unit
                 return u
         if re.search(r"(률|(?<!환)율|비중|margin|ratio|yield)\s*$", _PAREN.sub("", t or "").strip(), re.I):  # '환율'은 값(원/달러)이지 비율이 아니다
             return Unit(percent=True, label="%")
+    if table_unit.scale != 1.0 and re.search(r"per share|\bEPS\b|주당", label or "", re.I):  # '(USD in Millions, except per share)' — 주당 값은 배율 밖
+        return Unit(currency=table_unit.currency, label=table_unit.currency or "")
     return table_unit
 
 
@@ -171,6 +212,10 @@ def table_figures(doc_id: str, chunk: Dict[str, Any], doc_basis: Optional[str] =
     attribute = col_periods == 0 and not transposed
     years = set(re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", chunk.get("heading") or "")) if attribute else set()
     caption_period = years.pop() if len(years) == 1 else ""
+    # 제목에 날짜가 있으면(일일 시장 스냅샷 '… 2026-10-29') 기간 = 그날 — 연도로 접으면 다른 날 값끼리 '자료마다 다른 값'이 된다
+    dated = re.search(r"(?<!\d)((?:19|20)\d{2}-\d{2}-\d{2})(?!\d)", chunk.get("heading") or "") if attribute else None
+    if dated:
+        caption_period = dated.group(1)
     out: List[Figure] = []
     last_label = ""
     for ri, row in enumerate(data_rows, start=h):
@@ -197,7 +242,7 @@ def table_figures(doc_id: str, chunk: Dict[str, Any], doc_basis: Optional[str] =
                     "metric": metric_label(metric),
                     "metricKey": metric_key(metric),
                     "period": period.strip(),
-                    "periodKey": period_key(period),
+                    "periodKey": caption_period if dated and attribute else period_key(period),
                     "basis": basis,
                     "raw": raw,
                     "value": value,

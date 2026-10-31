@@ -13,7 +13,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.docs.store import doc_label, load_chunks, load_meta
-from app.formats.registry import block_spec, label, section_blocks_of
+from app.formats.registry import block_spec, label, section_blocks_of, titled
 from app.ledger.figures import load_figures
 
 Doc = Dict[str, Any]
@@ -98,11 +98,49 @@ def _chart(spec: Dict[str, Any], table: Dict[str, Any]) -> Dict[str, Any]:
     return {**base, "missing": False, "docId": table["docId"], "chunk": table["chunk"], "sheet": table["sheet"], "categories": [r[0]["text"] for r in picked], "series": series}
 
 
+def doc_subject(doc: Doc) -> str:
+    """문서의 대상 기업 — 리포트 설정 subject, 없으면 자료 카드의 회사명 가운데 가장 많은 것."""
+    s = ((doc.get("setup") or {}).get("subject") or "").strip()
+    if s:
+        return s
+    from collections import Counter
+
+    names = Counter(str(((load_meta(d) or {}).get("card") or {}).get("company") or "").strip() for d in doc.get("documentIds") or [])
+    names.pop("", None)
+    return names.most_common(1)[0][0] if names else ""
+
+
+def layout_blocks(doc: Doc, ids: Sequence[str], step: str, number_of: Optional[Callable[[str], int]] = None) -> List[Dict[str, Any]]:
+    """양식 2.0 틀의 표·그림 자리 — 표는 원장으로 채우고(research/form_rows, LLM 0회), 그림은 그릴 수 있으면 차트(research/form_charts), 아니면 자리."""
+    from app.research.form_charts import fill_chart
+    from app.research.form_rows import figure_block, fill_form
+
+    forms = (doc.get("layout") or {}).get("forms") or {}
+    subject = doc_subject(doc)
+    out: List[Dict[str, Any]] = []
+    for bid in ids:
+        form = titled(doc, forms.get(bid))
+        if not form:
+            continue
+        if form.get("kind") == "table":
+            b = fill_form(form, doc.get("documentIds") or [], subject, doc.get("ledgerChoices") or {})
+        else:  # 그림 자리 — 원본 차트 모양으로 우리 자료를 그릴 수 있으면 차트, 아니면 자리(사진·연혁 그림·자료 없는 산업 차트)
+            b = (fill_chart(form, doc.get("documentIds") or [], subject, doc.get("ledgerChoices") or {}) if form.get("chart") else None) or figure_block(form)
+        b = {**b, "step": step, "label": form.get("title") or ""}
+        if number_of:
+            for d in b.get("sourceDocIds") or []:
+                number_of(d)
+        out.append(b)
+    return out
+
+
 def section_format_blocks(doc: Doc, sec: Dict[str, Any], number_of: Optional[Callable[[str], int]] = None, sheets: Optional[SheetIndex] = None) -> List[Dict[str, Any]]:
     """섹션 뒤에 붙는 표·그림 블록(양식 리포트만). number_of 를 주면 데이터 자료를 참고 자료 번호에 올린다."""
     ids = section_blocks_of(doc, sec)
     if not ids:
         return []
+    if doc.get("layout"):
+        return layout_blocks(doc, ids, sec["step"], number_of)
     sheets = sheets or SheetIndex(doc.get("documentIds") or [])
     type_id = doc.get("reportType")
     tables: Dict[str, Dict[str, Any]] = {}
@@ -125,12 +163,15 @@ def section_format_blocks(doc: Doc, sec: Dict[str, Any], number_of: Optional[Cal
 
 
 def report_blocks(doc: Doc) -> List[Dict[str, Any]]:
-    """리포트 전체의 표·그림 블록(내보내기·엑셀용) — 섹션 순서대로."""
+    """리포트 전체의 표·그림 블록(내보내기·엑셀용) — 섹션 순서대로(틀 문서는 부록 표까지)."""
     sheets = SheetIndex(doc.get("documentIds") or [])
     out: List[Dict[str, Any]] = []
     for s in doc.get("sections") or []:
         out.extend(section_format_blocks(doc, s, sheets=sheets))
+    for p in (doc.get("layout") or {}).get("parts") or []:
+        if p.get("role") == "appendix":
+            out.extend(layout_blocks(doc, p.get("blocks") or [], f"part:{p['id']}"))
     return out
 
 
-__all__ = ["SheetIndex", "section_format_blocks", "report_blocks"]
+__all__ = ["SheetIndex", "doc_subject", "layout_blocks", "section_format_blocks", "report_blocks"]

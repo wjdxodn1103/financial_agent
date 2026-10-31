@@ -20,6 +20,8 @@ from app.agent.modes import RESEARCH_ONLY, WRITING_ONLY_RESEARCH, normalize as n
 from app.agent.plan import remaining_plan
 from app.agent.progress import progress, suggest_next
 from app.agent.prompts import chat_system
+from app.agent.session import mark_ai_draft
+from app.anchors import pin_text
 from app.agent.session import Doc, add_section, find_by_title, find_section, history_messages, log_section, push_history, set_section, written_sections
 from app.agent.tools import TOOL_NAMES, ToolContext, card_fields, run_tool
 from app.agent.writer import write_section
@@ -34,6 +36,14 @@ logger = logging.getLogger(__name__)
 Save = Callable[[], Union[None, Awaitable[None]]]
 MAX_TURNS = 8
 CHAT_MAX_TOKENS = 4000
+# 앞 턴의 작업 설명('**…** 섹션을 고쳐 썼습니다 (1,047자).')을 흉내 내 도구 없이 끝낸 답 — 본문은 그대로인데 고쳤다고 말한다(2026-10-30 실측)
+_FAKE_DONE = re.compile(r"섹션을\s*(?:고쳐\s*)?썼습니다")
+# 검색·계산 도구만 부르고 작업 설명 꼴('이렇게 쓴 이유'·'사용한 근거')까지 흉내 낸 답도 있다(2026-10-30 실측 10번 중 9번) — 작성 도구를 불렀는지로 가린다
+_WRITE_TOOLS = {"write_section", "revise_section", "continue_plan"}
+
+
+def _wrote(history: List[Dict[str, Any]]) -> bool:
+    return any((tc.get("function") or {}).get("name") in _WRITE_TOOLS for m in history if m.get("role") == "assistant" for tc in m.get("tool_calls") or [])
 
 
 async def _call_save(save: Optional[Save]) -> None:
@@ -76,6 +86,9 @@ class TranscriptBuilder:
             tb = e.get("table") or {}
             keep = [x for x in m.get("tables") or [] if x.get("id") != tb.get("id")]
             m["tables"] = [*keep, {"id": tb.get("id"), "title": tb.get("title")}]
+        elif t == "proposal":
+            # 대화로 등록 — 루틴·수집 소스 확인 카드(사람이 [등록]해야 저장)
+            m["proposals"] = [*(m.get("proposals") or []), e.get("proposal") or {}]
         elif t == "item_link":
             # 찾아서 연 문서·데이터 파일 — 화면이 여는 버튼으로 그린다
             m["links"] = [*(m.get("links") or []), e.get("item") or {}]
@@ -186,6 +199,7 @@ async def run_chat(doc: Doc, text: str, llm: Any, emit_raw: Emit, save: Optional
     answered = False
     cancelled = False
     pushed = False
+    nudged = False
     try:
         past = history_messages(doc) if defs else plain_history(doc.get("history") or [])
         messages: List[Dict[str, Any]] = [{"role": "system", "content": chat_system(doc, mode)}, *past, {"role": "user", "content": text}]
@@ -204,6 +218,17 @@ async def run_chat(doc: Doc, text: str, llm: Any, emit_raw: Emit, save: Optional
             if cleaned != content:
                 emit(ev("text_replace", text=cleaned))
             if not acc:
+                if mode.get("writing") and _FAKE_DONE.search(cleaned or "") and not _wrote(new_history):
+                    if not nudged:
+                        # 지우고 한 번 다시 부른다 — 이번에는 도구를 부르거나 못 하는 이유를 말하게
+                        nudged = True
+                        emit(ev("text_replace", text=""))
+                        messages += [{"role": "assistant", "content": cleaned},
+                                     {"role": "user", "content": "[내부 메모] 방금 답은 섹션을 썼다고 했지만 작성 도구(write_section·revise_section)를 부르지 않아 본문은 그대로다. "
+                                                                 "작업 설명('이렇게 쓴 이유'·'사용한 근거')은 시스템이 작성 뒤에 붙이는 것이라 직접 쓰지 않는다. 요청대로 하려면 그 도구를 지금 부른다. 할 수 없으면 그 이유만 짧게 말한다."}]
+                        continue
+                    cleaned = "섹션 본문을 쓰거나 고치지 못했습니다(작성 도구가 실행되지 않았습니다). 같은 요청을 다시 보내 주세요."
+                    emit(ev("text_replace", text=cleaned))
                 if cleaned:
                     new_history.append({"role": "assistant", "content": cleaned})
                 break
@@ -257,7 +282,7 @@ async def run_chat(doc: Doc, text: str, llm: Any, emit_raw: Emit, save: Optional
                 new_history.append({"role": "assistant", "content": f"[바로 작성: {pa['question']}]"})
                 push_history(doc, new_history)
                 pushed = True
-                await _write_approved(doc, {"approved": True}, pa, llm, emit, save, pa.get("action") or "plan")
+                await _write_approved(doc, {"approved": True}, pa, llm, emit, save, pa.get("action") or "plan", ctx.lb.calcs)  # 대화가 먼저 계산한 값도 계산 기록으로
                 break
             if pa:
                 # 카드가 떴으면 모델을 다시 부르지 않는다(마무리 호출에서 "네, 승인합니다" 같은 역할극이 나온다 — OP 실측)
@@ -274,6 +299,11 @@ async def run_chat(doc: Doc, text: str, llm: Any, emit_raw: Emit, save: Optional
         if answered and not cancelled and not pushed:
             push_history(doc, new_history)
         doc.setdefault("transcript", []).append(tb.msg)
+        if tb.msg.get("text"):
+            try:
+                tb.msg["anchors"] = await asyncio.to_thread(pin_text, tb.msg["text"])  # 답의 출처 문단을 지금 원문으로 얼린다
+            except Exception:  # noqa: BLE001 — 고정 실패가 답을 막지 않게
+                logger.exception("pin answer cites failed")
         emit(ev("suggestions", chips=suggestions_for(doc)))
         await _call_save(save)
         emit_raw(ev("done"))
@@ -322,7 +352,7 @@ async def run_approval(doc: Doc, approval: Dict[str, Any], llm: Any, emit_raw: E
         emit_raw(ev("done"))
 
 
-async def _write_approved(doc: Doc, approval: Dict[str, Any], pending: Dict[str, Any], llm: Any, emit: Emit, save: Optional[Save], action: str) -> None:
+async def _write_approved(doc: Doc, approval: Dict[str, Any], pending: Dict[str, Any], llm: Any, emit: Emit, save: Optional[Save], action: str, turn_calcs: Optional[List[Dict[str, Any]]] = None) -> None:
     # 카드 2단계에서 받은 사용자 입력 — 세션에 누적(같은 key 는 다음 카드에 미리 채운다)
     inputs = {k: v for k, v in (approval.get("inputs") or {}).items() if isinstance(v, str) and v.strip()}
     if inputs:
@@ -365,12 +395,13 @@ async def _write_approved(doc: Doc, approval: Dict[str, Any], pending: Dict[str,
     item_keys = {f["key"] for f in card_fields(doc, list(sec.get("covers") or [])).get("inputFields") or []}
     user_info = {k: v for k, v in (doc.get("userInputs") or {}).items() if k in item_keys}
     try:
-        res = await write_section(llm, doc, sec["step"], doc_ids=doc_ids, instruction=instruction, user_info=user_info, previous_text=previous, on_stage=lambda stage: emit(ev("status", stage=stage)))
+        res = await write_section(llm, doc, sec["step"], doc_ids=doc_ids, instruction=instruction, user_info=user_info, previous_text=previous, on_stage=lambda stage: emit(ev("status", stage=stage)), extra_calcs=turn_calcs or [])
     except Exception:
         emit(ev("tool_end", id=tid, name=tool_name, status="error", summary=f"{sec['title']} 작성 실패"))  # 화면의 도구 줄이 계속 도는 채로 남지 않게
         raise
     content = res["content"]
     set_section(doc, sec["step"], content, {"docIds": token_doc_ids(content), "checks": res["checks"], "warnings": res["warnings"], "calcs": res.get("calcs") or [], "memo": res.get("memo") or ""})
+    mark_ai_draft(doc, sec["step"], content)  # 사람이 고친 정도(사용자 수정률)·근거 고정
     doc["lastWrittenStep"] = sec["step"]
     log_section(doc, sec["step"], f"{'수정' if action == 'revise' else '작성'} · {len(content)}자 · 출처 {res['checks']['citations']}곳")
     enqueue_cited(content)  # 인용된 문서만 카드 정리(LLM)를 뒤에서 — 업로드 직후에는 LLM 을 쓰지 않는다
@@ -397,7 +428,9 @@ def explain(doc: Doc, emit: Emit, sec: Dict[str, Any], res: Dict[str, Any], acti
     ev_ = (doc.get("evidence") or {}).get(sec["step"])
     if isinstance(ev_, dict):
         doc["evidence"] = {**doc["evidence"], sec["step"]: {**ev_, "explain": text}}  # 근거 탭에서 다시 본다(새 dict 대입)
-    push_history(doc, [{"role": "user", "content": f"[바로 작성] {sec['title']} {'수정' if action == 'revise' else '작성'}"}, {"role": "assistant", "content": text}])
+    # 모델 기록에는 한 줄만 — 작업 설명 전문을 자기 답으로 두면 다음 턴에 도구 없이 그 꼴을 흉내 내 '썼습니다'라고 끝낸다(2026-10-30 실측). 전문은 화면·근거 탭에
+    done = f"[시스템 기록] write_section 실행으로 '{sec['title']}' 섹션 {'수정' if action == 'revise' else '작성'} 끝({len(sec.get('content') or '')}자). 작업 설명은 시스템이 붙였다." + (f" 다음 추천: {nxt}" if nxt else "")
+    push_history(doc, [{"role": "user", "content": f"[바로 작성] {sec['title']} {'수정' if action == 'revise' else '작성'}"}, {"role": "assistant", "content": done}])
 
 
 def checks_text(c: Dict[str, Any]) -> str:

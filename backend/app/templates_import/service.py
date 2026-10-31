@@ -240,7 +240,7 @@ class FileImport:
 
         with Session(engine) as s:
             user = s.get(User, imp["ownerId"])
-            body = {k: proposal.get(k) for k in ("name", "desc", "style", "sections")}
+            body = {k: proposal.get(k) for k in ("name", "desc", "style", "sections", "blueprint")}
             return create_from_proposal(s, imp["workspaceId"], user, {**body, "scope": "workspace"}, Path(imp["path"]), imp["name"], proposal.get("assets") or [], draft=True)
 
     def get(self, workspace_id: str, user: User, iid: str) -> Dict[str, Any]:

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.docs.chunk import preview
 from app.docs.store import doc_label, doc_language, load_meta, search_cards, search_docs
+from app.ledger.numbers import korean_hints
 
 SEARCH_TOOL_NAME = "search_documents"
 SEARCH_K = 6
@@ -39,6 +40,10 @@ SEARCH_TOOL_SCHEMA: Dict[str, Any] = {
                 "kind": {"type": "string", "enum": ["table", "prose"], "description": "표 문단만(table) 또는 본문만(prose) — 수치 표를 찾을 때 table(선택)"},
                 "year": {"type": "integer", "description": "이 연도가 나오는 문단을 앞으로(예: 2024 — 빼지는 않는다, 기간이 분명할 때, 선택)"},
                 "include_disclaimer": {"type": "boolean", "description": "면책·법적 고지 문단도 찾을지(기본 false — 고지 내용을 물을 때만 true)"},
+                "doc_type": {"type": "string", "enum": ["사업보고서", "분기·반기보고서", "감사보고서", "IR 자료", "애널리스트 리포트", "공시", "내부 규정·지침", "뉴스·보도자료", "경제·산업 자료"], "description": "이 종류의 자료에서만(선택 — 예: 공시, 뉴스·보도자료)"},
+                "issuer": {"type": "string", "description": "발행처·회사 이름 일부(선택 — 예: 연준, ECB, Helios)"},
+                "since": {"type": "string", "description": "이 날짜(YYYY-MM-DD) 이후 자료만(선택)"},
+                "until": {"type": "string", "description": "이 날짜(YYYY-MM-DD) 이전 자료만(선택)"},
             },
             "required": ["query"],
         },
@@ -124,6 +129,32 @@ def _pick_docs(doc_ids: Sequence[str], spec: str) -> List[str]:
     return near or list(doc_ids)
 
 
+def _meta_filter(scope: List[str], args: Dict[str, Any]) -> Tuple[List[str], str]:
+    """문서 카드(종류·발행처·날짜)로 범위를 좁힌다 — 수집 파이프라인이 넣은 자료는 카드가 확실해 잘 듣는다. 맞는 자료가 없으면 거르지 않는다."""
+    from app.docs.asof import doc_date
+
+    dt, iss = str(args.get("doc_type") or "").strip(), str(args.get("issuer") or "").strip().lower()
+    since, until = str(args.get("since") or "")[:10], str(args.get("until") or "")[:10]
+    if not (dt or iss or since or until):
+        return scope, ""
+    keep = []
+    for d in scope:
+        meta = load_meta(d) or {}
+        c = meta.get("card") or {}
+        if dt and c.get("docType") != dt:
+            continue
+        if iss and iss not in f"{c.get('issuer') or ''} {c.get('company') or ''} {c.get('title') or ''}".lower():
+            continue
+        if since or until:
+            dd = doc_date(meta)
+            if dd is None or (since and dd.isoformat() < since) or (until and dd.isoformat() > until):
+                continue
+        keep.append(d)
+    if not keep:
+        return scope, "\n[내부 메모] 종류·발행처·기간 조건에 맞는 자료가 없어 조건 없이 찾았다."
+    return keep, ""
+
+
 def run_search(book: SourceBook, doc_ids: Sequence[str], args: Dict[str, Any], k: int = SEARCH_K) -> Dict[str, Any]:
     """→ {"text": 모델에게 돌려줄 결과, "hits": n}. 동기 함수(스레드에서 부른다)."""
     qs = [q.strip() for q in (str(args.get("query") or ""), str(args.get("query_en") or "")) if q and q.strip()]
@@ -132,6 +163,7 @@ def run_search(book: SourceBook, doc_ids: Sequence[str], args: Dict[str, Any], k
     if not doc_ids:
         return {"text": "근거 없음 — 업로드한 자료가 없습니다. 오른쪽 '자료' 패널에서 파일을 올려 달라고 안내하세요.", "hits": 0}
     scope = _pick_docs(doc_ids, str(args.get("document") or ""))
+    scope, meta_note = _meta_filter(scope, args)
     per = SEARCH_PER_DOC if len(scope) > 1 else k
     kind = args.get("kind") if args.get("kind") in ("table", "prose") else None
     try:
@@ -159,12 +191,14 @@ def run_search(book: SourceBook, doc_ids: Sequence[str], args: Dict[str, Any], k
         text = h["chunk"].get("text") or ""
         # 표는 줄 구조를 지킨다(행이 한 줄로 뭉치면 숫자가 어느 항목인지 모른다)
         body = (text[:SNIPPET_CHARS] + ("…" if len(text) > SNIPPET_CHARS else "")) if table else preview(text, SNIPPET_CHARS)
-        lines.append(f"[S{n}] {label}, {where}{head}{' · 표' if table else ''}\n{body}")
+        hints = korean_hints(body)  # 영문 규모 금액의 한국어 표기 — 모델이 billion 을 조·억으로 바꾸다 자릿수를 틀리지 않게
+        lines.append(f"[S{n}] {label}, {where}{head}{' · 표' if table else ''}\n{body}" + (f"\n(한국어 금액 표기: {'; '.join(hints)})" if hints else ""))
     # 같은 질의를 되풀이해도 새 문단이 없으면 그렇게 알려 검색을 멈추게 한다(작성기가 거의 같은 질의를 4번 부르던 실측)
     if len(book.items) == seen_before:
         refs = ", ".join(f"[S{book.add(h['docId'], h['chunk'], '')}]" for h in hits)
         return {"text": f"새 문단 없음 — 이미 받은 {refs} 와 같다.\n[내부 메모] 비슷한 질의를 되풀이하지 말고, 가진 자료로 쓰거나 그 항목은 '자료에서 확인되지 않음'으로 처리한다.", "hits": 0}
     # 영문 자료가 범위에 있는데 영문 질의가 없었으면 다음 검색부터 같이 쓰게 알린다(영문 문단은 영문 질의로 더 정확히 찾힌다)
     en_memo = "\n[내부 메모] 영문 자료가 있다 — 다음 검색부터 query_en 에 같은 내용의 영어 질의도 넣는다." if not str(args.get("query_en") or "").strip() and any(doc_language(d) == "en" for d in scope) else ""
+    relaxed += meta_note
     # 첫 줄은 화면 "작업 과정" 요약으로도 쓰인다(loop._summary) — 지시문은 둘째 줄부터
     return {"text": f"검색 결과 {len(lines)}개(관련도 순)\n[내부 메모] 문장을 실제로 뒷받침하는 문단의 [S번호] 만 문장 끝에 단다.{en_memo}{relaxed}\n\n" + "\n\n".join(lines), "hits": len(lines)}

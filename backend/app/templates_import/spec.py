@@ -126,7 +126,7 @@ async def table_to_spec(llm: Any, rows: List[List[str]], caption: str, unit: Opt
     if llm is not None:
         try:
             # 추론 모델 — 출력 상한이 작으면 생각만 하다 빈 답을 낸다(fill.py 와 같은 2500). 빈 답이면 한 번 더
-            params = ChatParams(messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], temperature=0.1, max_tokens=2500, timeout_s=60, reasoning_effort="low")
+            params = ChatParams(messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], temperature=0.1, max_tokens=2500, timeout_s=60)
             for _try in range(2):
                 out = await llm.complete("chat", params)
                 ans = _json(getattr(out, "content", None) or "")

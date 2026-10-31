@@ -1,6 +1,6 @@
 # 작성 결과 ↔ 원본 반기 보고서 숫자 대조
 
-- 리포트 세션 `rmvkazd0pexh9` · 원본 `03_nbim_gpfg_half_year_2025_investments.pdf` · 2026-10-23 10:58 · `demo/nbim/compare.py` (LLM 0회)
+- 리포트 세션 `rmvkazd0pexh9` · 원본 `03_nbim_gpfg_half_year_2025_investments.pdf` · 2026-10-30 15:17 · `demo/nbim/compare.py` (LLM 0회)
 - 원본에서 읽은 숫자 656개 (amount 94 · percent 126 · plain 394 · pp 34 · unknown 8) — 본문 단위 숫자 + 표 칸(표 제목의 단위), 그림 축 눈금·연도 머리 제외
 - 같은 값 = 반올림 한 단위까지(`same_value`, 같은 자릿수의 한 단위 차이 6.74% vs 6.73% 는 다름) · %·%p 는 값끼리 · 금액은 abs 값끼리(통화가 둘 다 있으면 같아야) · 크기만 같으면 '부호 다름'으로 일치
 - '있음' = 그 값이 원본 어딘가에 있다는 뜻 — 같은 지표의 값인지는 아래 '원본 위치' 칸으로 확인
@@ -10,12 +10,16 @@
 | 섹션 | 본문 숫자 | 원본에 있음 | 비율 |
 |---|---:|---:|---:|
 | 주식 | 16 | 16 | 100.0% |
+| 채권 | 20 | 18 | 90.0% |
 | 투자 체계(위임 한도) | 16 | 16 | 100.0% |
-| **전체** | **32** | **32** | **100.0%** |
+| **전체** | **52** | **50** | **96.2%** |
 
-## 원본에 없는 숫자 (0개)
+## 원본에 없는 숫자 (2개)
 
-없음 — 본문 숫자가 모두 원본에 있다.
+| 섹션 | 숫자 | 숫자 확인 판정 | 문장 |
+|---|---|---|---|
+| 채권 | 4.20% | 자료와 일치 | 금리 환경의 경우 미국 국채 10년 금리는 2024년 연말 4.57%에서 2025년 연말 4.20%로 하락했으며, 미국 기준금리 상단 역시 4.50%에서 3.75%로 인하됐다. |
+| 채권 | 3.75% | 자료와 일치 | 금리 환경의 경우 미국 국채 10년 금리는 2024년 연말 4.57%에서 2025년 연말 4.20%로 하락했으며, 미국 기준금리 상단 역시 4.50%에서 3.75%로 인하됐다. |
 
 ## 숫자별 대조
 
@@ -37,6 +41,26 @@
 | 주식 | 22.2% | 있음 | p.8 TABLE 4 · Europe |  |
 | 주식 | 10.5% | 있음 | p.8 TABLE 4 · Asia and Oceania |  |
 | 주식 | 10.8% | 있음 | p.8 TABLE 4 · Emerging markets |  |
+| 채권 | 3.31% | 있음 | p.7 TABLE 2 · Fixed-income investments |  |
+| 채권 | 1.61% | 있음 | p.7 TABLE 2 · Fixed-income investments |  |
+| 채권 | 1.67% | 있음 | p.7 TABLE 2 · Fixed-income investments |  |
+| 채권 | 5.74% | 있음 | p.7 TABLE 2 · Return on fund |  |
+| 채권 | 2.5% | 있음 | p.11 TABLE 6 · Government bonds2 |  |
+| 채권 | 57.9% | 있음 | p.11 TABLE 6 · Government bonds2 |  |
+| 채권 | 9.5% | 있음 | p.11 TABLE 6 · Securitised bonds |  |
+| 채권 | 6.0% | 있음 | p.11 TABLE 6 · Securitised bonds |  |
+| 채권 | 2.9% | 있음 | p.11 TABLE 6 · Inflation-linked bonds2 |  |
+| 채권 | 24.9% | 있음 | p.11 TABLE 6 · Corporate bonds |  |
+| 채권 | 5.5% | 있음 | p.11 TABLE 6 · Government-related bonds2 |  |
+| 채권 | 9.8% | 있음 | p.11 TABLE 6 · Government-related bonds2 |  |
+| 채권 | 2.9% | 있음 | p.11 TABLE 6 · Inflation-linked bonds2 |  |
+| 채권 | 6.3% | 있음 | p.11 TABLE 6 · Inflation-linked bonds2 |  |
+| 채권 | 4.57% | 있음 | p.16 본문: …d's investments 0.4 Credit risk Maximum **5 percent** of fixed-income investments m… |  |
+| 채권 | 4.20% | **없음** | | 자료와 일치 |
+| 채권 | 4.50% | 있음 | p.16 본문: …d's investments 0.4 Credit risk Maximum **5 percent** of fixed-income investments m… |  |
+| 채권 | 3.75% | **없음** | | 자료와 일치 |
+| 채권 | 5조 3,110억 크로네 | 있음 | p.5 TABLE 1 · Fixed-income investments |  |
+| 채권 | 5조 2,530억 크로네 | 있음 | p.5 TABLE 1 · Fixed-income investments |  |
 | 투자 체계(위임 한도) | 70.4% | 있음 | p.16 TABLE 13 · Equity portfolio 60–80 percent of fund's market value1 | 단위 미표기 표 값 |
 | 투자 체계(위임 한도) | 80% | 있음 | p.16 본문: ….06.2025 Allocation Equity portfolio 60–**80 percent** of fund's market value1 70.4 … |  |
 | 투자 체계(위임 한도) | 27.7% | 있음 | p.16 TABLE 13 · Fixed-income portfolio 20–40 percent of fund's market value1 | 단위 미표기 표 값 |

@@ -8,6 +8,8 @@
  * 등록 전 양식(샘플 분석 직후 — 만든 사람에게만 보임)은 [버리기]·[등록] — 등록해야 다른 사람·새 문서에 보인다.
  * 고칠 수 있는 양식은 아래 입력창으로 AI 에게 말로 고쳐 달라고 할 수 있다(고친 것은 바로 저장 — 직접 고친 것이 있으면 먼저 저장).
  * 옛 양식(기본·표 양식 자리)은 섹션 뒤 자리(slots)를 그대로 보인다.
+ * 양식 2.0 틀(샘플 PDF 글자층에서 뽑은 것 — format.blueprint)이 있으면 [예시 문서] = 장(큰 제목) → 소주제(하위 카테고리) → 표·차트 자리 고치기(BlueprintOutline),
+ * [에셋] = 샘플 값으로 채운 표·차트 미리보기(문서 화면과 같은 모양). 저장하면 틀(outline)이 바뀌고 새 문서부터 쓴다.
  */
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, BarChart3, ExternalLink, FileText, ImageIcon, Loader2, PenLine, Plus, Send, Sparkles, Table2, Trash2, X } from "lucide-react";
@@ -21,8 +23,9 @@ import { createReport } from "../workspace/api";
 import { useWorkspace } from "../workspace/context";
 import { formatAssetImageUrl, formatSampleUrl, patchFormat, registerFormat, reviseFormat } from "./api";
 import { AssetFormView } from "./AssetFormView";
+import { BlueprintAssets, chaptersOf, OutlineEditor } from "./BlueprintOutline";
 import { SlotPreview } from "./SlotPreview";
-import type { DocFormat, FormatAsset, FormatSection, FormatSlot } from "./types";
+import type { DocFormat, FormatAsset, FormatSection, FormatSlot, OutlineChapter } from "./types";
 
 const LEVELS = [
   { v: 1, label: "큰 제목" },
@@ -75,6 +78,9 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
   const [scope, setScope] = useState(format.scope);
   const [sections, setSections] = useState<FormatSection[]>(format.sections);
   const [assets, setAssets] = useState<FormatAsset[]>(format.assets ?? []);
+  const bp = format.blueprint ?? null;
+  const previews = format.previews ?? {};
+  const [chapters, setChapters] = useState<OutlineChapter[]>(chaptersOf(format.blueprint));
   const [tab, setTab] = useState<"doc" | "assets">("doc");
   const [selId, setSelId] = useState<string | null>(format.assets?.[0]?.id ?? null);
   const [openSlot, setOpenSlot] = useState<string | null>(null);
@@ -92,8 +98,14 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
     style !== (format.style ?? "") ||
     scope !== format.scope ||
     JSON.stringify(sections) !== JSON.stringify(format.sections) ||
-    JSON.stringify(assets) !== JSON.stringify(format.assets ?? []);
-  const sel = assets.find((a) => a.id === selId) ?? null;
+    JSON.stringify(assets) !== JSON.stringify(format.assets ?? []) ||
+    (!!bp && JSON.stringify(chapters) !== JSON.stringify(chaptersOf(format.blueprint)));
+  const sel = bp ? null : (assets.find((a) => a.id === selId) ?? null);
+  // 양식 2.0 — 고른 표·차트 양식(원본 자르기는 틀의 쪽·좌표로)
+  const bpSel = bp && selId ? (bp.forms[selId] ?? null) : null;
+  const selPage = bpSel?.page ?? sel?.source.page ?? null;
+  const selCaption = bpSel ? (previews[bpSel.id]?.title ?? bpSel.title) : sel?.source.caption;
+  const selBox = bpSel ? !!bpSel.bbox : !!sel?.source.box;
   const pdf = /\.pdf$/i.test(format.sample || "") || format.kind === "format";
   const sectionTitle = (sid: string | null) => sections.find((s) => s.id === sid)?.title;
 
@@ -128,12 +140,13 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
     setStyle(f.style ?? "");
     setSections(f.sections);
     setAssets(f.assets ?? []);
+    setChapters(chaptersOf(f.blueprint));
   };
 
   /** 직접 고친 것 저장 — 실패하면 null(알림은 여기서) */
   const persist = async (): Promise<DocFormat | null> => {
-    if (sections.some((s) => !s.title.trim()) || assets.some((a) => !a.name.trim())) {
-      toast.error("섹션·표·차트 이름을 적어 주세요.", { position: "top-center" });
+    if (bp ? chapters.some((c) => !c.title.trim() || c.subtopics.some((s) => !s.title.trim())) : sections.some((s) => !s.title.trim()) || assets.some((a) => !a.name.trim())) {
+      toast.error(bp ? "장·소주제 이름을 적어 주세요." : "섹션·표·차트 이름을 적어 주세요.", { position: "top-center" });
       return null;
     }
     try {
@@ -141,8 +154,12 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
         name: name.trim() || format.title,
         desc,
         style,
-        sections,
-        ...(format.assets?.length ? { assets: assets.map((a) => ({ id: a.id, name: a.name.trim(), desc: a.desc, ...(a.chart ? { chartType: a.chart.type } : {}) })) } : {}),
+        ...(bp
+          ? { outline: chapters }
+          : {
+              sections,
+              ...(format.assets?.length ? { assets: assets.map((a) => ({ id: a.id, name: a.name.trim(), desc: a.desc, ...(a.chart ? { chartType: a.chart.type } : {}) })) } : {}),
+            }),
         ...(scope !== format.scope && scope !== "builtin" && !format.draft ? { scope: scope as TemplateScope } : {}),
       });
       adopt(f);
@@ -205,7 +222,7 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
     }
   };
 
-  const assetCount = assets.length || legacy.length;
+  const assetCount = bp ? Object.keys(previews).length : assets.length || legacy.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -271,7 +288,9 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
                     )}
                   </div>
                 )}
-                {sections.map((s, i) => {
+                {bp && <OutlineEditor bp={bp} chapters={chapters} setChapters={setChapters} ro={ro} previews={previews} onShow={showAsset} />}
+                {!bp &&
+                  sections.map((s, i) => {
                   const here = assets.filter((a) => a.sectionId && a.sectionId === s.id);
                   return (
                     <div key={s.id ?? `new${i}`} className={cn("rounded-2xl bg-white p-3.5", s.level === 2 && "ml-5", s.level === 3 && "ml-10")}>
@@ -355,6 +374,10 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
                     </div>
                   );
                 })}
+              </div>
+            ) : bp ? (
+              <div className="mx-auto max-w-[760px]">
+                <BlueprintAssets bp={bp} chapters={chapters} previews={previews} selId={selId} onSelect={setSelId} />
               </div>
             ) : (
               <div className="mx-auto flex max-w-[760px] flex-col gap-3">
@@ -450,28 +473,28 @@ export function FormatEditor({ format, templates, onBack, onSaved, onRemoved }: 
         <aside className="flex w-[460px] shrink-0 flex-col border-l border-neutral-200 bg-[#fbfcfd]">
           <div className="flex h-11 shrink-0 items-center gap-2 border-b border-neutral-200 px-4">
             <span className="text-[13px] font-semibold text-text-primary">원본</span>
-            {tab === "assets" && sel?.source.page ? <span className="min-w-0 truncate text-[12px] text-text-secondary">p.{sel.source.page}{sel.source.caption ? ` · ${sel.source.caption}` : ""}</span> : null}
+            {tab === "assets" && selPage ? <span className="min-w-0 truncate text-[12px] text-text-secondary">p.{selPage}{selCaption ? ` · ${selCaption}` : ""}</span> : null}
             {format.hasSample && (
-              <a href={formatSampleUrl(ws.workspaceId, format.id) + (tab === "assets" && sel?.source.page && pdf ? `#page=${sel.source.page}` : "")} target="_blank" rel="noreferrer" className="ml-auto flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] text-text-secondary hover:bg-neutral-100">
+              <a href={formatSampleUrl(ws.workspaceId, format.id) + (tab === "assets" && selPage && pdf ? `#page=${selPage}` : "")} target="_blank" rel="noreferrer" className="ml-auto flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] text-text-secondary hover:bg-neutral-100">
                 <ExternalLink className="size-3.5" aria-hidden />
-                {tab === "assets" && sel?.source.page ? "쪽 전체" : "새 창"}
+                {tab === "assets" && selPage ? "쪽 전체" : "새 창"}
               </a>
             )}
           </div>
           {!format.hasSample ? (
             <p className="px-5 py-6 text-[13px] text-text-secondary">이 양식에는 원본(예시 문서)이 없습니다.</p>
-          ) : tab === "assets" && sel ? (
-            sel.source.box && pdf ? (
+          ) : tab === "assets" && (sel || bpSel) ? (
+            selBox && pdf ? (
               <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
                 {/* eslint-disable-next-line @next/next/no-img-element -- 서버가 잘라 낸 PNG(로그인 uid 쿼리) */}
-                <img key={sel.id} src={formatAssetImageUrl(ws.workspaceId, format.id, sel.id)} alt={`원본 ${sel.source.caption || sel.name}`} className="w-full rounded-lg bg-white ring-1 ring-neutral-200" />
+                <img key={selId} src={formatAssetImageUrl(ws.workspaceId, format.id, selId ?? "")} alt={`원본 ${selCaption ?? ""}`} className="w-full rounded-lg bg-white ring-1 ring-neutral-200" />
               </div>
-            ) : pdf && sel.source.page ? (
-              <iframe key={sel.id} title="원본" src={`${formatSampleUrl(ws.workspaceId, format.id)}#page=${sel.source.page}`} className="min-h-0 w-full flex-1 bg-white" />
+            ) : pdf && selPage ? (
+              <iframe key={selId} title="원본" src={`${formatSampleUrl(ws.workspaceId, format.id)}#page=${selPage}`} className="min-h-0 w-full flex-1 bg-white" />
             ) : (
               <p className="px-5 py-6 text-[13px] text-text-secondary">이 표·차트는 원본 위치가 없습니다(Word 샘플). 위 '새 창'으로 원본을 엽니다.</p>
             )
-          ) : tab === "assets" && assets.length > 0 ? (
+          ) : tab === "assets" && (assets.length > 0 || bp) ? (
             <p className="px-5 py-6 text-[13px] text-text-secondary">표·차트를 고르면 원본에서 그 부분을 보입니다.</p>
           ) : pdf ? (
             <iframe title="원본" src={formatSampleUrl(ws.workspaceId, format.id)} className="min-h-0 w-full flex-1 bg-white" />

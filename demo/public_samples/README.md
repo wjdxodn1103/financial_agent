@@ -1,4 +1,4 @@
-# 공개 샘플 보고서 6종 — 양식 요소 목록
+# 공개 샘플 보고서 7종 — 양식 요소 목록
 
 KIC 해외투자 업무와 비슷한 공개 보고서에서 **회사가 공유하는 표·그림·섹션 양식**을 뽑아, 도구(양식 블록)와 보고서 양식 등록의 기준으로 쓴다.
 사용 흐름(목표): 보고서 양식을 검색해 고른다 → 쓰다가 "여기 과거 성과 표"처럼 지시한다 → LLM 이 등록된 양식 블록을 골라 자료·데이터로 채운다 → 사람이 고친다.
@@ -16,6 +16,7 @@ KIC 해외투자 업무와 비슷한 공개 보고서에서 **회사가 공유�
 | `04_kcmi_pension_asset_allocation_2025-02.pdf` | 자본시장연구원 이슈보고서 25-05 '국내 연기금 자산배분 체계 진단 및 개선 방향' — [원문](https://www.kcmi.re.kr/report/report_view?report_no=1824) | 자산배분 정책 검토(SAA 리뷰) | 23 (전체) | 한 |
 | `05_kcmi_overseas_alt_risk_2020.pdf` | 자본시장연구원 이슈보고서 20-27 '코로나19사태에 따른 해외대체투자 위험요인 분석' — [원문](https://www.kcmi.re.kr/kcmifile/report_data/1219/reportpdf_1219_3.pdf) | 해외 대체투자 리스크 점검 | 21 (전체) | 한 |
 | `06_edison_theon_2026-07.pdf` | Edison Investment Research, 'Theon International — The optics look good'(2026-07-17) — [원문](https://www.edisongroup.com/research/the-optics-look-good/BM-3458/) | 해외 기업 분석(직접·공동투자 대상) | 17 (전체) | 영 |
+| `07_kirs_sbbtech_2026-01.pdf` | 한국IR협의회 기업리서치센터, 기업분석 '에스비비테크(389500) — 베어링을 넘어 로봇 부품 다크호스로 변모 중'(2026-01-06, Word 로 만든 글자층 PDF) — [원문](https://stock.pstatic.net/stock-research/company/74/20260122_company_9699000.pdf) | 국내 상장 소형주 기업분석(양식 2.0 — 틀·표·쪽 모양 추출 시험, demo/kirs) | 27 (전체) | 한 |
 
 ---
 

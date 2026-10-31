@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Tuple
 
 from app.docs.citations import strip_tokens, tokens
 from app.docs.store import doc_label, load_chunks, load_meta
-from app.formats.registry import block_spec, label, section_blocks_of
+from app.formats.registry import doc_block_spec, label, section_blocks_of
 from app.ledger.numbers import find_amounts
 
 _SENT = re.compile(r"(?<=[.!?。])\s+|\n+")
@@ -66,7 +66,7 @@ def explain_section(doc: Dict[str, Any], sec: Dict[str, Any], res: Dict[str, Any
         out.append(f"**이렇게 쓴 이유** — {res['memo']}")
     ev = evidence_lines(content)
     out.append("**사용한 근거**\n" + ("\n".join(ev) if ev else "- 출처를 단 문장이 없습니다."))
-    blocks = [block_spec(doc.get("reportType"), b) for b in section_blocks_of(doc, sec)]
+    blocks = [doc_block_spec(doc, b) for b in section_blocks_of(doc, sec)]
     labels = [label(b) for b in blocks if b]
     if labels:
         out.append("**붙인 표·그림** — " + ", ".join(labels))

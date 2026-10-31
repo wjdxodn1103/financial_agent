@@ -298,12 +298,15 @@ def write_blocks_xlsx(blocks: List[Dict[str, Any]]) -> bytes:
     head_fill = PatternFill("solid", fgColor=NAVY_HEX)
     seen = set()
     for b in blocks:
-        name = f"{'표' if b['kind'] == 'table' else '그림'} {b['no']}"
+        if b.get("no") is not None:
+            name = f"{'표' if b['kind'] == 'table' else '그림'} {b['no']}"
+        else:  # 양식 2.0 틀의 표·차트는 번호 없이 제목만 — 시트 이름 = 제목(엑셀 31자·금지 글자 빼고)
+            name = re.sub(r"[\\/*?:\[\]]", " ", b.get("title") or b.get("label") or "표")[:31].strip() or "표"
         if name in seen:
             continue
         seen.add(name)
         ws = wb.create_sheet(name)
-        ws.append([b["label"]])
+        ws.append([b.get("label") or b.get("title") or ""])
         ws["A1"].font = Font(bold=True, color=NAVY_HEX, size=12)
         ws.append([f"단위: {b.get('unit') or '-'}"])
         if b.get("missing"):

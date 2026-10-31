@@ -12,6 +12,9 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getMyPage } from "../../api";
 import { useWorkspace } from "../../context";
+import { ReceivedCard } from "./ReceivedCard";
+import { TodayCard } from "../../../assumptions/TodayCard";
+import { FEATURES } from "../../features";
 import type { MyActivity, MyDocument, MyPage as MyPageData, MyReviewRequest, MyTodo } from "../../types";
 import { NewDocumentDialog } from "../NewDocumentDialog";
 import { STATUS } from "./taskParts";
@@ -143,7 +146,14 @@ export function MyPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {FEATURES.todayCheck && (
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            <TodayCard />
+            <ReceivedCard />
+          </div>
+        )}
+
+        <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", FEATURES.todayCheck ? "mt-4" : "mt-6")}>
           <Stat label="오늘 할 일" value={dueToday.length} tone="accent" onClick={() => ws.nav.view("tasks")} />
           <Stat label="기한 지난 일" value={overdue.length} tone="danger" onClick={() => ws.nav.view("tasks")} />
           <Stat label="검토할 문서" value={waiting.length} tone="accent" onClick={() => ws.nav.view("requests")} />

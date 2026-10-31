@@ -13,6 +13,8 @@ import { Paperclip, PenLine, SendHorizontal, Square, Table2 } from "lucide-react
 import { cn } from "@/lib/utils";
 import { composerDraftAtom, formatPickAtom, hasUserMessageAtom, modesAtom, sessionAtom, streamingAtom, suggestionsAtom } from "../../atoms";
 import { FEATURES } from "../../../workspace/features";
+import { useWorkspace } from "../../../workspace/context";
+import { listRoutines, type Routine } from "../../../routines/api";
 import { useReportActions } from "../../hooks/useReportStudio";
 import type { Modes } from "../../types";
 
@@ -56,6 +58,19 @@ export function Composer({ centered = false }: { centered?: boolean }) {
   const setPicking = useSetAtom(formatPickAtom);
   const [text, setText] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // '/' 호출 — 루틴(반복 업무)의 지시를 입력창에 넣고 문서 작성을 켠다(통합 포털 편의)
+  const ws = useWorkspace();
+  const [routines, setRoutines] = useState<Routine[] | null>(null);
+  const slash = FEATURES.routines && text.startsWith("/") && !text.includes("\n") ? text.slice(1).trim().toLowerCase() : null;
+  useEffect(() => {
+    if (slash !== null && routines === null) void listRoutines(ws.workspaceId).then(setRoutines, () => setRoutines([]));
+  }, [slash, routines, ws.workspaceId]);
+  const calls = slash !== null && routines ? routines.filter((r) => !slash || r.call.slice(1).toLowerCase().includes(slash) || r.name.toLowerCase().includes(slash)).slice(0, 6) : [];
+  const useRoutine = (r: Routine) => {
+    setText(`'${r.formatTitle || r.name}' 양식으로 — ${r.instruction || r.name}`);
+    if (!modes.writing) actions.setModes({ research: false, writing: true });
+    taRef.current?.focus();
+  };
   const sampleRef = useRef<HTMLInputElement>(null);
   const disabled = streaming || !session;
   const chips = hasUserMessage ? suggestions : [];
@@ -105,6 +120,18 @@ export function Composer({ centered = false }: { centered?: boolean }) {
             disabled && "opacity-70",
           )}
         >
+          {calls.length > 0 && (
+            <div className="border-b border-neutral-100 px-1.5 pt-1.5 pb-1">
+              {calls.map((r) => (
+                <button key={r.id} type="button" onClick={() => useRoutine(r)} className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-neutral-50">
+                  <span className="font-mono text-[12px] font-semibold text-primary">{r.call}</span>
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
+                    {r.formatTitle} · {r.instruction}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             ref={taRef}
             rows={1}
@@ -115,7 +142,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                submit();
+                if (calls.length) useRoutine(calls[0]);
+                else submit();
               }
             }}
             className="chat-prose block max-h-40 w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm leading-6 text-text-primary outline-none placeholder:text-text-secondary"

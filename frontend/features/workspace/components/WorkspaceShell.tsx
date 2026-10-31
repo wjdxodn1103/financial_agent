@@ -9,7 +9,7 @@
  * 리포트·대화를 열면 사이드바는 아이콘 줄로 접힌다 — 펼치기 버튼으로 다시 연다.
  */
 import { useCallback, useEffect, useState, type ComponentType, type FormEvent } from "react";
-import { ChevronLeft, ClipboardCheck, FileText, HardDrive, Home, LayoutTemplate, LogOut, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sparkles, Users } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Gauge, FileText, HardDrive, Home, LayoutDashboard, LayoutTemplate, LogOut, MessageSquare, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sparkles, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { FormatsView } from "../../formats/FormatsView";
@@ -22,6 +22,16 @@ import { useTasksChanged, useWorkspace } from "../context";
 import { FEATURES } from "../features";
 import type { WorkspaceView } from "../types";
 import { Brand } from "./Brand";
+import { NotificationBell } from "./NotificationBell";
+import { WorkspaceSourceHost } from "../sourceHost";
+import { AssumptionsDrawerHost } from "../../assumptions/AssumptionsDrawer";
+import { SourcesView } from "../../data/SourcesView";
+import { DashboardPage } from "../../dashboards/DashboardPage";
+import { RoutinesView } from "../../routines/RoutinesView";
+import { GuidelineView } from "../../assistants/GuidelineView";
+import { QualityView } from "../../quality/QualityView";
+import { CalendarView } from "../../calendar/CalendarView";
+import { SearchStudio } from "../../search/SearchStudio";
 import { RoleBadge } from "./RoleBadge";
 import { ChannelView } from "./views/ChannelView";
 import { CompanyDriveView } from "./views/CompanyDriveView";
@@ -63,24 +73,54 @@ const GROUPS: Group[] = [
     id: "drive",
     label: "드라이브",
     icon: HardDrive,
-    views: ["documents", "company", ...(FEATURES.assets ? (["assets"] as const) : []), ...(FEATURES.ledgerView ? (["ledger"] as const) : [])],
+    views: ["documents", "company", ...(FEATURES.sources ? (["sources"] as const) : []), ...(FEATURES.assets ? (["assets"] as const) : []), ...(FEATURES.ledgerView ? (["ledger"] as const) : [])],
     children: [
       { view: "documents", label: "워크스페이스" },
       { view: "company", label: "사내 공용" },
+      ...(FEATURES.sources ? [{ view: "sources" as const, label: "수집 소스" }] : []),
       ...(FEATURES.assets ? [{ view: "assets" as const, label: "에셋" }] : []),
       ...(FEATURES.ledgerView ? [{ view: "ledger" as const, label: "근거 원장" }] : []),
     ],
   },
-  { id: "write", label: "AI 작업", icon: Sparkles, views: ["reports"] },
+  {
+    id: "write",
+    label: "AI 작업",
+    icon: Sparkles,
+    views: ["reports", ...(FEATURES.routines ? (["routines"] as const) : [])],
+    ...(FEATURES.routines ? { children: [{ view: "routines" as const, label: "루틴" }] } : {}),
+  },
+  ...(FEATURES.searchStudio ? [{ id: "search", label: "검색", icon: Search, views: ["search" as const] }] : []),
+  ...(FEATURES.market || FEATURES.dataStatus || FEATURES.wsDashboard || FEATURES.calendar
+    ? [
+        {
+          id: "dashboards",
+          label: "대시보드",
+          icon: LayoutDashboard,
+          views: [
+            ...(FEATURES.market ? (["market"] as const) : []),
+            ...(FEATURES.calendar ? (["calendar"] as const) : []),
+            ...(FEATURES.dataStatus ? (["dataStatus"] as const) : []),
+            ...(FEATURES.wsDashboard ? (["dashboard"] as const) : []),
+          ],
+          children: [
+            ...(FEATURES.market ? [{ view: "market" as const, label: "시장" }] : []),
+            ...(FEATURES.calendar ? [{ view: "calendar" as const, label: "경제 일정" }] : []),
+            ...(FEATURES.dataStatus ? [{ view: "dataStatus" as const, label: "데이터 현황" }] : []),
+            ...(FEATURES.wsDashboard ? [{ view: "dashboard" as const, label: "우리 워크스페이스" }] : []),
+          ],
+        },
+      ]
+    : []),
   { id: "formats", label: "문서 양식", icon: LayoutTemplate, views: ["formats"] },
   {
     id: "review",
     label: "문서 검수",
     icon: ClipboardCheck,
-    views: ["reviews", "requests"],
+    views: ["reviews", "requests", ...(FEATURES.assistants ? (["guideline"] as const) : [])],
     children: [
       { view: "reviews", label: "검수" },
       { view: "requests", label: "검토 요청" },
+      ...(FEATURES.assistants ? [{ view: "guideline" as const, label: "가이드라인 점검" }] : []),
     ],
   },
   ...(FEATURES.researchChat ? [{ id: "chat", label: "AI 채팅", icon: MessageSquare, views: ["research" as const] }] : []),
@@ -103,6 +143,14 @@ const VIEW_LABEL: Record<WorkspaceView, string> = {
   reviews: "검수",
   requests: "검토 요청",
   members: "멤버·설정",
+  sources: "수집 소스",
+  market: "시장",
+  dataStatus: "데이터 현황",
+  dashboard: "우리 워크스페이스",
+  routines: "루틴",
+  quality: "품질·이용",
+  guideline: "가이드라인 점검",
+  calendar: "경제 일정",
 };
 
 function groupOf(view: WorkspaceView): Group | undefined {
@@ -284,6 +332,12 @@ export function WorkspaceShell({ view, reportId, tableId, query, onLogout }: { v
           </nav>
 
           <div className="border-t border-neutral-200 px-3 py-3">
+            {FEATURES.quality && ws.meta.admins?.includes(ws.me.id) && (
+              <TreeItem on={view === "quality"} onClick={() => ws.nav.view("quality")}>
+                <Gauge className={cn("size-[18px]", view === "quality" ? "text-primary" : "text-neutral-500")} />
+                관리 · 품질·이용
+              </TreeItem>
+            )}
             <TreeItem on={view === "members"} onClick={() => ws.nav.view("members")}>
               <Settings className={cn("size-[18px]", view === "members" ? "text-primary" : "text-neutral-500")} />
               멤버·설정
@@ -336,19 +390,22 @@ export function WorkspaceShell({ view, reportId, tableId, query, onLogout }: { v
               </>
             )}
           </nav>
-          <form
-            onSubmit={submit}
-            className="flex w-[300px] shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-3.5 py-1.5 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/30"
-          >
-            <Search className="size-4 text-neutral-500" aria-hidden />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="이 워크스페이스에서 찾기"
-              aria-label="워크스페이스 검색"
-              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-neutral-500"
-            />
-          </form>
+          <div className="flex shrink-0 items-center gap-2">
+            <form
+              onSubmit={submit}
+              className="flex w-[300px] shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-3.5 py-1.5 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/30"
+            >
+              <Search className="size-4 text-neutral-500" aria-hidden />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="이 워크스페이스에서 찾기"
+                aria-label="워크스페이스 검색"
+                className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-neutral-500"
+              />
+            </form>
+            {FEATURES.notifications && <NotificationBell />}
+          </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -378,15 +435,33 @@ export function WorkspaceShell({ view, reportId, tableId, query, onLogout }: { v
             <ReviewsView />
           ) : view === "requests" ? (
             <RequestsView />
+          ) : view === "guideline" ? (
+            <GuidelineView />
+          ) : view === "calendar" ? (
+            <CalendarView key={reportId ?? ""} initial={reportId} />
+          ) : view === "quality" && FEATURES.quality && ws.meta.admins?.includes(ws.me.id) ? (
+            <QualityView />
           ) : view === "members" ? (
             <MembersView />
           ) : view === "search" ? (
-            <SearchView query={query} />
+            FEATURES.searchStudio ? <SearchStudio query={query} /> : <SearchView query={query} />
+          ) : view === "market" ? (
+            <DashboardPage key="market" kind="market" title="시장" />
+          ) : view === "dataStatus" ? (
+            <DashboardPage key="data" kind="data" title="데이터 현황" />
+          ) : view === "dashboard" ? (
+            <DashboardPage key="ws" kind="workspace" title={ws.detail?.workspace.name ?? "우리 워크스페이스"} />
+          ) : view === "routines" ? (
+            <RoutinesView key={reportId ?? ""} initial={reportId} />
+          ) : view === "sources" ? (
+            <SourcesView key={reportId ?? ""} initialSource={reportId} />
           ) : (
             <HomeView />
           )}
         </div>
       </main>
+      <WorkspaceSourceHost />
+      {FEATURES.assumptions && <AssumptionsDrawerHost />}
     </div>
   );
 }

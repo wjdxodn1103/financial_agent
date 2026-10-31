@@ -5,11 +5,15 @@
  * 작업 이름은 위쪽 경로에 보인다. 문서가 없는 작업(대화만)은 양식·내보내기 버튼을 숨긴다. 모델은 backend/.env 가 정한다(화면에 안 보인다).
  */
 import { useState } from "react";
-import { useAtomValue } from "jotai";
-import { Download, FileSpreadsheet, FileText, LayoutTemplate, Loader2, PanelRight, X } from "lucide-react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { Download, FileSpreadsheet, FileText, Flag, LayoutTemplate, Loader2, PanelRight, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { assumptionsDrawerAtom, needsLook, useDocAssumptions } from "../../../assumptions/state";
+import { approveDoc } from "../../../workspace/api";
+import { FEATURES } from "../../../workspace/features";
+import { APPROVAL_KO } from "../../../workspace/components/SendDialog";
 import { useWorkspace } from "../../../workspace/context";
 import { downloadBlocksXlsx } from "../../api";
 import { canChatAtom, exportingAtom, hasDocAtom, modesAtom, panelsAtom, reportAtom, sessionAtom } from "../../atoms";
@@ -100,6 +104,65 @@ function PanelToggles() {
   );
 }
 
+/** 문서 상태(AI 초안·검토 중·승인) + 검토를 요청받은 사람에게 [승인] */
+function ApprovalChip() {
+  const session = useAtomValue(sessionAtom);
+  const ws = useWorkspace();
+  const actions = useReportActions();
+  const [busy, setBusy] = useState(false);
+  const a = session?.approval;
+  if (!a?.status) return null;
+  const canApprove = a.status === "review" && a.reviewerId === ws.me.id;
+  const approve = async () => {
+    if (!session) return;
+    setBusy(true);
+    try {
+      await approveDoc(session.id);
+      toast.success("승인했습니다.", { position: "top-center" });
+      await actions.reload();
+    } catch {
+      toast.error("승인하지 못했습니다.", { position: "top-center" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="rounded-md bg-neutral-100 px-2 py-1 text-[12px] font-medium text-neutral-700">{APPROVAL_KO[a.status] ?? a.status}</span>
+      {canApprove && (
+        <button type="button" disabled={busy} onClick={() => void approve()} className="h-8 cursor-pointer rounded-lg bg-primary px-3 text-[12px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50">
+          승인
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** 문서 머리 '가정' — 이 문서가 기댄 가정(감시 중 수 · 판정이 바뀐 수). 누르면 가정 서랍 */
+function AssumptionsButton() {
+  const session = useAtomValue(sessionAtom);
+  const report = useAtomValue(reportAtom);
+  const ws = useWorkspace();
+  const open = useSetAtom(assumptionsDrawerAtom);
+  const { items } = useDocAssumptions(ws.workspaceId, session?.id);
+  if (!session || !report?.stats.written) return null;
+  const watching = items.filter((a) => a.watch).length;
+  const changed = items.filter((a) => a.watch && needsLook(a)).length;
+  return (
+    <button
+      type="button"
+      title="이 문서가 기댄 가정 — 감시를 켜면 새 자료가 올 때마다 다시 판정합니다"
+      onClick={() => open({ docKind: "report", docRef: session.id, title: report.title || "문서" })}
+      className="flex h-8 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 px-2 text-[11px] text-text-secondary hover:bg-neutral-50 hover:text-text-primary"
+    >
+      <Flag className="size-3.5" aria-hidden />
+      <span>가정</span>
+      {watching > 0 && <span className="tabular-nums text-text-primary">{watching}</span>}
+      {changed > 0 && <span className="rounded bg-neutral-800 px-1 text-[10px] font-semibold text-white">볼 것 {changed}</span>}
+    </button>
+  );
+}
+
 export function TopBar() {
   const actions = useReportActions();
   const report = useAtomValue(reportAtom);
@@ -129,6 +192,8 @@ export function TopBar() {
     <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-neutral-200 bg-white px-3">
       <TaskButtons />
       <div className="flex shrink-0 items-center gap-2">
+        <ApprovalChip />
+        {FEATURES.assumptions && <AssumptionsButton />}
         <TemplateButton />
         <PanelToggles />
         <button

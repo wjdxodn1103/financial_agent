@@ -85,9 +85,19 @@ class HeadingTrail:
         return [t for _, t in self.stack]
 
 
+# 미국 공시 표 제목 — '(USD in Millions, except per share)' · '$ in Thousands'
+SEC_UNIT_RX = re.compile(r"(?:(USD|EUR|GBP|JPY|\$)\s*)?\bin\s+(millions|thousands|billions)\b", re.I)
+
+
 def unit_of(text: str) -> Optional[str]:
     m = UNIT_RX.search(text or "")
-    return m.group(1).strip(" .,") if m else None
+    if m:
+        return m.group(1).strip(" .,")
+    s = SEC_UNIT_RX.search(text or "")
+    if s:
+        cur = {"$": "USD"}.get(s.group(1) or "", (s.group(1) or "").upper())
+        return f"{cur} {s.group(2).lower()}".strip()
+    return None
 
 
 def _clean_cell(v: Any) -> str:
@@ -429,7 +439,7 @@ def extract_xlsx(path: str | Path) -> Dict[str, Any]:
                     only = next(c for c in rows[0] if c)
                     if unit_of(only):
                         unit = unit_of(only)
-                    elif only != ws.title:
+                    if (not unit_of(only) or not UNIT_RX.search(only)) and only != ws.title:  # 공시 표 제목('… (USD in Millions)')은 단위이자 제목
                         heading = f"{ws.title} / {only}"
                     rows = normalize_rows(rows[1:])
                 if not rows:
