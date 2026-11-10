@@ -117,6 +117,10 @@ def widget_data(w: Dict[str, Any], workspace_id: str, user: User, as_of: Optiona
             return {"metrics": _optional("app.quality.kpi", "widget_metrics", p.get("metrics") or [])}
         if t == "note":
             return {"text": p.get("text") or ""}
+        if t == "peer_board":
+            from app.dashboards.peer import board
+
+            return {"peer": board(workspace_id, p, as_of)}
     except Exception as e:  # noqa: BLE001
         log.exception("widget %s failed", t)
         return {"error": str(e)[:200]}

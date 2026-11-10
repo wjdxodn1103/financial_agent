@@ -108,6 +108,11 @@ def chat_system(doc: Doc, modes: Optional[Dict[str, bool]] = None) -> str:
     notes = notes_lines(doc.get("teamNotes") or [])
     if notes:
         parts.append("## 팀 기록(워크스페이스 멤버가 확정한 결정·지시·방침 — 따른다. 사용자가 물으면 작성자·날짜와 원문을 그대로 알려 준다)\n" + "\n".join(notes[:12]))
+    if doc.get("_criteria"):
+        from app.criteria.prompting import criteria_lines
+
+        parts.append("## 판단 기준(승인된 사내·워크스페이스 기준 — 해석·제안의 틀로 쓴다. 조건 도달 여부는 줄의 코드 판정만 따르고, 도달한 기준은 그 방향을 '○○ 검토 제안(기준 이름·판)'으로만 알린다)\n"
+                     + "\n".join(criteria_lines(doc["_criteria"])))
     if doc.get("decisions"):
         parts.append("## 앞선 대화 메모\n" + "\n".join(doc["decisions"][-8:]))
     return "\n\n".join(parts)

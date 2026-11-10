@@ -92,7 +92,7 @@ def _market_doc(as_of: Optional[str], src: Dict[str, Any]) -> Optional[str]:
         return None
     did = snapshot_id("market", day)
     make_snapshot(did, file_name=f"시장·거시 데이터 {day}.json", file_type="json", paras=paras, raw=b,
-                  card={"title": f"시장·거시 데이터 {day}", "docType": "경제·산업 자료", "date": day, "issuer": "DCF 수집(FRED·미 재무부·ECB·뉴욕 연은·데모 가상)", "oneLine": "금리·환율·원자재·주가지수·신용·거시 지표 — 전일·1주·1달 대비"},
+                  card={"title": f"시장·거시 데이터 {day}", "docType": "경제·산업 자료", "date": day, "issuer": "AssociateLM 수집(FRED·미 재무부·ECB·뉴욕 연은·데모 가상)", "oneLine": "금리·환율·원자재·주가지수·신용·거시 지표 — 전일·1주·1달 대비"},
                   snapshot={"connector": "market", "title": f"시장·거시 데이터 {day}", "params": {"asOf": day}, "fetchedAt": now_iso(), "publishedAt": day, "sourceId": src["id"]}, figure_source="market")
     t = _target(src)
     attach(did, t["scope"], t["workspace_id"], t["folder_id"], t["added_by"])
@@ -138,7 +138,7 @@ def _calendar_doc(as_of: Optional[str], src: Dict[str, Any]) -> Optional[str]:
     day = b["day"]
     did = snapshot_id("calendar", day)
     make_snapshot(did, file_name=f"경제 일정 {day}.json", file_type="json", paras=b["paras"], raw=b["raw"],
-                  card={"title": f"경제 일정 {day}", "docType": "경제·산업 자료", "date": day, "issuer": "DCF 수집(기관 공식 발표 일정표·FRED 발표일·IANA 시간대 규칙)",
+                  card={"title": f"경제 일정 {day}", "docType": "경제·산업 자료", "date": day, "issuer": "AssociateLM 수집(기관 공식 발표 일정표·FRED 발표일·IANA 시간대 규칙)",
                         "oneLine": "이번 주 주요 발표 일정(한국 시각·현지 시각)과 서머타임 등 시간대 변경"},
                   snapshot={"connector": "calendar", "title": f"경제 일정 {day}", "params": {"asOf": day}, "fetchedAt": now_iso(), "publishedAt": day, "sourceId": src["id"]},
                   figure_source="calendar")

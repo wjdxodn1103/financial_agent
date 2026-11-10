@@ -1,4 +1,4 @@
-"""에비던스 데스크 백엔드 — FastAPI(워크스페이스·자료·근거 원장·리포트·검수·협업).
+"""AssociateLM 백엔드 — FastAPI(워크스페이스·자료·근거 원장·리포트·검수·협업).
 
 실행: .venv\\Scripts\\python.exe main.py   (backend 폴더에서 — 127.0.0.1:8200)
      .venv\\Scripts\\python.exe -m uvicorn main:app --port 8200   (uvicorn 옵션을 직접 줄 때)
@@ -22,6 +22,7 @@ from app.api.assumption_routes import router as assumption_router
 from app.api.assistant_routes import router as assistant_router
 from app.api.quality_routes import router as quality_router
 from app.api.calendar_routes import router as calendar_router
+from app.api.criteria_routes import router as criteria_router
 from app.api.research_routes import router as research_router
 from app.api.routes import router
 from app.auth import seed_users
@@ -47,7 +48,7 @@ async def lifespan(_app: FastAPI):
     docs_queue.stop_worker()
 
 
-app = FastAPI(title="Evidence Desk", lifespan=lifespan)
+app = FastAPI(title="AssociateLM", lifespan=lifespan)
 app.add_middleware(UsageMiddleware)  # 사용 귀속(사람·워크스페이스·기능) — CORS 안쪽
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"], expose_headers=["Content-Disposition"])
 app.include_router(router)
@@ -62,6 +63,7 @@ app.include_router(assumption_router)
 app.include_router(assistant_router)
 app.include_router(quality_router)
 app.include_router(calendar_router)
+app.include_router(criteria_router)
 
 
 @app.get("/health")
@@ -70,6 +72,9 @@ def health():
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8200)
+    # 기본은 이 PC 에서만 열린다. 서버에 올릴 때는 환경 변수로 바꾼다(예: HOST=0.0.0.0 PORT=8200).
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8200")))

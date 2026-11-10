@@ -25,8 +25,8 @@ from docx.text.run import Run
 from app.docs.store import doc_dir, doc_label, load_chunks, load_meta
 from app.review.rules import RULE_KO
 
-AUTHOR = "에비던스 데스크"
-INITIALS = "ED"
+AUTHOR = "AssociateLM"
+INITIALS = "AL"
 _SIMPLE = {qn("w:rPr"), qn("w:t")}
 
 

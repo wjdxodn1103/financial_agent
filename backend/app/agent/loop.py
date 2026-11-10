@@ -400,7 +400,8 @@ async def _write_approved(doc: Doc, approval: Dict[str, Any], pending: Dict[str,
         emit(ev("tool_end", id=tid, name=tool_name, status="error", summary=f"{sec['title']} 작성 실패"))  # 화면의 도구 줄이 계속 도는 채로 남지 않게
         raise
     content = res["content"]
-    set_section(doc, sec["step"], content, {"docIds": token_doc_ids(content), "checks": res["checks"], "warnings": res["warnings"], "calcs": res.get("calcs") or [], "memo": res.get("memo") or ""})
+    set_section(doc, sec["step"], content, {"docIds": token_doc_ids(content), "checks": res["checks"], "warnings": res["warnings"], "calcs": res.get("calcs") or [], "memo": res.get("memo") or "",
+                                            "criteria": res.get("criteria") or []})
     mark_ai_draft(doc, sec["step"], content)  # 사람이 고친 정도(사용자 수정률)·근거 고정
     doc["lastWrittenStep"] = sec["step"]
     log_section(doc, sec["step"], f"{'수정' if action == 'revise' else '작성'} · {len(content)}자 · 출처 {res['checks']['citations']}곳")

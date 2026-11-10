@@ -291,10 +291,14 @@ def today(session: Session, workspace_id: str, user: User) -> Dict[str, Any]:
     """홈 '오늘 확인할 것' — 판정이 바뀌었거나 살펴볼 결과(가정 미충족·재심의 조건 도달)인데 아직 넘기지 않은 감시 가정 + 루틴이 쓴 문서."""
     from app.dashboards.resolve import _routine_docs
 
+    from app.criteria.proposals import today_items
+    from app.criteria.service import pending_count
+
     require_member(session, workspace_id, user)
     rows = session.exec(select(Assumption).where(Assumption.workspace_id == workspace_id, Assumption.watch == True)).all()  # noqa: E712
     changed = [a for a in rows if needs_look(a)]
-    return {"assumptions": [view(session, a, _title_of(session, a)) for a in changed], "watching": len(rows), "routineDocs": _routine_docs(workspace_id)}
+    return {"assumptions": [view(session, a, _title_of(session, a)) for a in changed], "watching": len(rows), "routineDocs": _routine_docs(workspace_id),
+            "proposals": today_items(session, workspace_id, user), "criteriaPending": pending_count(session, workspace_id, user)}
 
 
 def widget_items(workspace_id: str, user: User) -> List[Dict[str, Any]]:

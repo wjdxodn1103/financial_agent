@@ -19,6 +19,7 @@ from app.agent.ledger_brief import CALC_TOOL_NAME, CALC_TOOL_SCHEMA, LedgerBook,
 from app.agent.prompts import load, setup_lines
 from app.agent.session import Doc, find_section, written_sections
 from app.agent.template import item_of, report_type
+from app.criteria.prompting import criteria_lines
 from app.docs.citations import normalize, tokens
 from app.docs.search_tool import SEARCH_TOOL_NAME, SEARCH_TOOL_SCHEMA, SourceBook, doc_index_lines, run_search
 from app.docs.chunk import preview
@@ -180,6 +181,7 @@ def build_brief(
     ledger: Sequence[str] = (),
     notes: Sequence[str] = (),
     block_lines: Sequence[str] = (),
+    criteria: Sequence[str] = (),
 ) -> str:
     sec = find_section(doc, step) or {}
     title = sec.get("title") or ""
@@ -210,6 +212,8 @@ def build_brief(
         blocks.append("## 요청 사항\n" + instruction.strip())
     if notes:
         blocks.append("## 팀 기록(확정된 결정·지시·방침 — 지킨다. 본문에 기록 자체를 인용하지는 않는다)\n" + "\n".join(notes))
+    if criteria:
+        blocks.append("## 판단 기준(승인된 사내·워크스페이스 기준 — 해석·시사점의 틀. 도달 여부는 줄의 코드 판정만 옮긴다)\n" + "\n".join(criteria))
     others = _other_sections(doc, step)
     if others:
         blocks.append("## 이미 쓴 다른 섹션(겹치지 않게, 결론이 어긋나지 않게)\n" + "\n".join(others))
@@ -416,10 +420,13 @@ async def write_section(
     ledger = await asyncio.to_thread(select_figures, doc_ids, doc.get("ledgerChoices") or {}, [*queries, sec["title"], instruction or ""], book, lb) if doc_ids else []
     material = await asyncio.to_thread(presearch, book, doc_ids, queries) if doc_ids else []
     notes = notes_lines(doc.get("teamNotes") or [], scope_hint=sec["title"])
+    crit_items = doc.get("_criteria") or []
+    crit = criteria_lines(crit_items) if crit_items else []
     block_lines = await asyncio.to_thread(block_brief_lines, doc, sec, book, lb) if has_blocks(doc) else []
     if on_stage:
         on_stage(f"writer.retrieve|문단 {len(material)}개 · 원장 수치 {len(ledger)}개")
-    brief = build_brief(doc, step, doc_ids=doc_ids, material=material, instruction=instruction, user_info=user_info or {}, previous_text=previous_text, ledger=ledger, notes=notes, block_lines=block_lines)
+    brief = build_brief(doc, step, doc_ids=doc_ids, material=material, instruction=instruction, user_info=user_info or {}, previous_text=previous_text, ledger=ledger, notes=notes,
+                        block_lines=block_lines, criteria=crit)
     if on_stage:
         on_stage("writer.generate")
     gen = await _generate_with_search(llm, load("writer_system"), brief, book, doc_ids, on_stage, lb)
@@ -457,4 +464,5 @@ async def write_section(
         "calcs": len(calcs),
         "truncated": gen["finish"] == "length",
     }
-    return {"content": content, "checks": checks, "warnings": warnings, "calcs": calcs, "memo": memo}
+    # 브리프에 실린 판단 기준(판 고정) — 섹션 근거에 '참고한 판단 기준'으로 남긴다
+    return {"content": content, "checks": checks, "warnings": warnings, "calcs": calcs, "memo": memo, "criteria": [{"id": c["id"], "key": c["key"], "version": c["version"]} for c in crit_items]}

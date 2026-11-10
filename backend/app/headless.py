@@ -50,6 +50,12 @@ async def write_report(*, workspace_id: str, owner_id: str, format_id: str, titl
         sid = payload["session"]["id"] if "session" in payload else payload["id"]
         row = s.get(ReportSession, sid)
         doc = copy.deepcopy(row.doc or {})
+    # 양식이 정한 준비 단계 — 쓰기 전에 그날 자료를 새로 받는다(전일 증시 요약: 시세·금리·일정·시장 뉴스 제목 → '증시 요약 데이터' 자료)
+    custom = (doc.get("layout") or {}).get("writer") or ""
+    if (doc.get("layout") or {}).get("prepare") == "market_daily":
+        from app.market import daily
+
+        await asyncio.to_thread(daily.prepare, workspace_id, as_of, owner_id)
     doc.update(await asyncio.to_thread(_workspace_context, workspace_id, doc, owner_id))
     doc_ids = docs_as_of(doc.get("documentIds") or [], as_of)
     doc["origin"] = {**(origin or {}), "asOf": as_of, "headless": True}
@@ -96,13 +102,19 @@ async def write_report(*, workspace_id: str, owner_id: str, format_id: str, titl
         scope = brief_for(plans[step], step) if step in plans else ""
         ins = "\n".join(x for x in [instruction.strip(), extra_brief.strip(), scope, f"기준일 {as_of} 까지의 자료만으로 쓴다." if as_of else ""] if x) or None
         try:
-            res = await write_section(llm, doc, step, doc_ids=doc_ids, instruction=ins)
+            if custom == "market_daily":  # 표·차트는 코드가 채우고 '시장 리뷰' 글만 모델이 쓴다
+                from app.market import daily
+
+                res = await daily.write_section(llm, doc, step, as_of)
+            else:
+                res = await write_section(llm, doc, step, doc_ids=doc_ids, instruction=ins)
         except Exception as e:  # noqa: BLE001 — 한 섹션 실패가 나머지를 막지 않게
             log.exception("headless section failed: %s", step)
             warnings.append(f"{sec['title']}: {str(e)[:120]}")
             continue
         content = res["content"]
-        set_section(doc, step, content, {"docIds": token_doc_ids(content), "checks": res["checks"], "warnings": res["warnings"], "calcs": res.get("calcs") or [], "memo": res.get("memo") or ""})
+        set_section(doc, step, content, {"docIds": token_doc_ids(content), "checks": res["checks"], "warnings": res["warnings"], "calcs": res.get("calcs") or [], "memo": res.get("memo") or "",
+                                         "criteria": res.get("criteria") or []})
         mark_ai_draft(doc, step, content)
         log_section(doc, step, f"루틴 작성 · {len(content)}자 · 출처 {res['checks']['citations']}곳")
         written.append(step)

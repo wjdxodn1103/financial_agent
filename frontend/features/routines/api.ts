@@ -50,3 +50,5 @@ export const updateRoutine = (id: string, body: RoutineInput) => req<Routine>(`/
 export const deleteRoutine = (id: string) => req<void>(`/api/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const runRoutine = (id: string, asOf?: string) => req<{ started: boolean }>(`/api/routines/${encodeURIComponent(id)}/run`, jsonInit("POST", asOf ? { asOf } : {}));
 export const listRoutineRuns = async (id: string) => (await req<{ runs: RoutineRunView[] }>(`/api/routines/${encodeURIComponent(id)}/runs`)).runs ?? [];
+/** 말로 등록 — 요청 문장 → 등록 창에 채울 값(저장은 등록 창에서) */
+export const proposeRoutine = (w: string, instruction: string) => req<RoutineInput>(`${wid(w)}/routines/propose`, jsonInit("POST", { instruction }));

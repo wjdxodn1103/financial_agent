@@ -33,6 +33,12 @@ async def recheck_for_docs(new_docs: List[str], trigger: Dict[str, Any], workspa
             n += 1
         except Exception:  # noqa: BLE001
             log.exception("recheck failed: %s", aid)
+    try:  # 판단 기준 판정 → 걸린 문서에 검토 제안(가정 판정 뒤 — 같은 새 자료로)
+        from app.criteria.proposals import on_new_docs
+
+        n += await on_new_docs(new_docs, trigger, workspace_id, as_of)
+    except Exception:  # noqa: BLE001
+        log.exception("criteria proposals failed")
     return n
 
 

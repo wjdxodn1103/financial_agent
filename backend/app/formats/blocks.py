@@ -122,7 +122,11 @@ def layout_blocks(doc: Doc, ids: Sequence[str], step: str, number_of: Optional[C
         form = titled(doc, forms.get(bid))
         if not form:
             continue
-        if form.get("kind") == "table":
+        if form.get("market"):  # 시장 표·차트 자리(전일 증시 요약 — app/market/daily.py): 그날의 '증시 요약 데이터' 자료 칸으로
+            from app.market.daily import fill_form as fill_market
+
+            b = fill_market(form, doc)
+        elif form.get("kind") == "table":
             b = fill_form(form, doc.get("documentIds") or [], subject, doc.get("ledgerChoices") or {})
         else:  # 그림 자리 — 원본 차트 모양으로 우리 자료를 그릴 수 있으면 차트, 아니면 자리(사진·연혁 그림·자료 없는 산업 차트)
             b = (fill_chart(form, doc.get("documentIds") or [], subject, doc.get("ledgerChoices") or {}) if form.get("chart") else None) or figure_block(form)

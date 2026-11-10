@@ -83,8 +83,44 @@ _BRIEF_V2: List[S] = [  # 2026-10-31 1차 — '오늘·이번 주 발표 일정'
 PREVIOUS: Dict[str, List[List[S]]] = {"kicusbrief": [_BRIEF_V1, _BRIEF_V2]}  # 2026-10-31 2차 — 공시·확인할 점 안내에 범위
 
 
+def _market_form(fid: str, title: str, table: str, position: str, kind: str = "table") -> Dict[str, Any]:
+    return {"id": fid, "kind": kind, "title": title, "position": position, "market": {"table": table}, **({"chart": {"type": "bar", "color": "#2E75B6"}} if kind == "figure" else {})}
+
+
+# 전일 증시 요약 — 증권사 아침 데일리 한 쪽 짜임(왼쪽: 글로벌 주식·채권/환율/원자재 표 + 시장 리뷰, 오른쪽: 업종별 등락률 차트 + 주요 체크 포인트).
+# 표·차트는 그날의 '증시 요약 데이터' 자료로 코드가 채우고(app/market/daily.py), '글로벌 시장 리뷰'만 모델이 쓴다. 틀(양식 2.0) 꼴이라 한 번 고치면 새 문서부터 적용된다.
+MARKET_DAILY_ID = "kicmarketdaily"
+MARKET_DAILY: Dict[str, Any] = {
+    "desc": "매일 아침 전일 증시 요약 — 지수·금리·환율·원자재 표, 업종별 등락률, 경제지표 일정, 시장 리뷰(루틴용)",
+    "style": "증권사 데일리 문체: 개조식, 명사형 종결('~상승 마감', '~하락', '~기록'). 숫자는 자료의 표기 그대로, 원인은 기사 근거가 있을 때만.",
+    "example": True, "sections": [], "assets": [],
+    "blueprint": {
+        "version": 2, "name": "전일 증시 요약", "desc": "전일 증시 요약(아침 데일리)", "prepare": "market_daily", "writer": "market_daily",
+        "theme": {"accent": "#2E75B6", "bandFill": "#2E75B6", "bandText": "#FFFFFF", "sidebarFill": "#F5F8FC", "sidebarWidth": 46, "captionColor": "#1F4E79"},
+        "rules": {"claim": "", "keyline": "", "para": "", "caption": "", "source": ""},
+        "style": "증권사 데일리 문체: 개조식, 명사형 종결('~상승 마감', '~하락', '~기록'). 숫자는 자료의 표기 그대로, 원인은 기사 근거가 있을 때만.",
+        "parts": [{"id": "summary", "role": "summary", "title": "전일 증시 요약", "heading": "전일 증시 요약", "layout": "main+sidebar", "sidebarWidth": 46, "claims": 0,
+                   "guide": "표(글로벌 주식, 채권/환율/원자재) 아래에 '글로벌 시장 리뷰'를 글머리표 4~5줄로.",
+                   "blocks": ["t_equity", "t_macro"], "sidebar": ["f_sector", "t_prev", "t_today"]}],
+        "forms": {
+            "t_equity": _market_form("t_equity", "글로벌 주식", "equity", "main"),
+            "t_macro": _market_form("t_macro", "채권/환율/원자재", "macro", "main"),
+            "f_sector": _market_form("f_sector", "S&P500 업종별 등락률", "sector", "sidebar", kind="figure"),
+            "t_prev": _market_form("t_prev", "전일 주요 경제지표", "prev", "sidebar"),
+            "t_today": _market_form("t_today", "오늘 주요 경제지표", "today", "sidebar"),
+        },
+    },
+}
+
+
 def seed() -> None:
     with Session(engine) as s:
+        t = s.get(ReportTemplate, MARKET_DAILY_ID)
+        if t is None:
+            s.add(ReportTemplate(id=MARKET_DAILY_ID, scope="company", workspace_id="", owner_id="", name="전일 증시 요약(예시)", source_name="", spec=MARKET_DAILY))
+        elif (t.spec or {}).get("example") and (t.spec or {}).get("blueprint") != MARKET_DAILY["blueprint"]:
+            t.spec = MARKET_DAILY  # 예시 양식은 코드가 정본(사용자가 고칠 수 없는 사내 예시)
+            s.add(t)
         for rid, name, desc, secs in EXAMPLES:
             t = s.get(ReportTemplate, rid)
             if t is None:

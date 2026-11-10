@@ -55,3 +55,25 @@ async def run_routine_now(routine_id: str, user: UserDep, session: SessionDep, b
 @router.get("/routines/{routine_id}/runs")
 def routine_runs(routine_id: str, user: UserDep, session: SessionDep):
     return {"runs": RoutineService(session).runs(routine_id, user)}
+
+
+class ProposeBody(BaseModel):
+    instruction: str
+
+
+@router.post("/workspaces/{workspace_id}/routines/propose")
+async def propose_routine(workspace_id: str, body: ProposeBody, user: UserDep, session: SessionDep):
+    """말로 등록 — "매일 아침 7시, 전날 증시 요약을 정해진 양식으로 올려 줘" → 등록 창에 채울 값(이름·양식·일정·지시). 저장은 사람이 등록 창에서 한다."""
+    from app.auth import require_member
+    from app.routines.propose import propose
+
+    require_member(session, workspace_id, user, "editor")
+    types = [{"id": t["id"], "title": t.get("title") or ""} for t in _report_types(session, workspace_id, user) if t.get("id") != "free"]
+    session.close()
+    return await propose(body.instruction, types)
+
+
+def _report_types(session: Any, workspace_id: str, user: Any) -> Any:
+    from app.api.import_routes import report_type_views
+
+    return report_type_views(session, workspace_id, user)

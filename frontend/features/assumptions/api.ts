@@ -78,6 +78,10 @@ export interface TodayPayload {
   assumptions: Assumption[];
   watching: number;
   routineDocs: { id: string; title: string; routine: string; asOf: string | null; status: string | null; updatedAt: string }[];
+  /** 내 문서에 열린 검토 제안(판단 기준) */
+  proposals?: { id: string; reportId: string; reportTitle: string; directionKo: string; changed: string; criterion?: string; createdAt: string }[];
+  /** 내가 승인할 수 있는 판단 기준 초안·수정안 수 */
+  criteriaPending?: number;
 }
 
 export const listAssumptions = async (w: string, docRef?: string) =>

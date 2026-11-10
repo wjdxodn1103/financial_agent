@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from app.ids import id36
-from app.market.catalog import BY_ID, GROUPS, SERIES
+from app.market.catalog import BY_ID, SERIES
 
 WIDGETS: Dict[str, Dict[str, Any]] = {
     "series_cards": {"label": "시리즈 카드(값·전일·1주·1달·스파크라인)", "params": {"seriesIds": "시리즈 id 목록(1~12)"}},
@@ -23,6 +23,8 @@ WIDGETS: Dict[str, Dict[str, Any]] = {
     "tasks": {"label": "내 할 일", "params": {}},
     "note": {"label": "메모", "params": {"text": "글"}},
     "kpi": {"label": "AI 품질·이용 지표", "params": {"metrics": "지표 id 목록"}},
+    # 양식(templates.py)이 만드는 위젯 — AI 가 직접 넣지 않는다(회사 고유번호·종목 표기는 코드가 찾는다). 지표만 고칠 수 있다.
+    "peer_board": {"label": "피어 비교(양식)", "params": {"companies": "양식이 채움 — 그대로 둔다", "metrics": "보일 지표 id 목록(revenue|op|opm|ni|roe|per|pbr|ret12)", "outlook": "양식이 채움 — 그대로 둔다"}, "template": True},
 }
 SIZES = ("s", "m", "l", "full")
 RANGES = ("1M", "3M", "6M", "1Y")
@@ -60,6 +62,10 @@ def clean(spec: Dict[str, Any], kind: str) -> Dict[str, Any]:
             params["text"] = str(p.get("text") or "")[:1000]
         if t == "kpi":
             params["metrics"] = [str(m) for m in p.get("metrics") or []][:8]
+        if t == "peer_board":
+            params = _peer_params(p)
+            if params is None:
+                continue
         wid = str(w.get("id") or "") or id36("w", 3)
         if wid in seen:
             wid = id36("w", 3)
@@ -67,7 +73,30 @@ def clean(spec: Dict[str, Any], kind: str) -> Dict[str, Any]:
         out.append({"id": wid, "type": t, "title": str(w.get("title") or WIDGETS[t]["label"])[:60], "params": params, "size": w.get("size") if w.get("size") in SIZES else "m"})
         if len(out) >= MAX_WIDGETS:
             break
-    return {"widgets": out}
+    from app.dashboards.templates import TEMPLATES
+
+    tpl = (spec or {}).get("template")
+    keep = tpl in TEMPLATES and kind in TEMPLATES[tpl]["kinds"] and any(w["type"] == "peer_board" for w in out)
+    return {"widgets": out, **({"template": tpl} if keep else {})}
+
+
+def _peer_params(p: Dict[str, Any]) -> Any:
+    """피어 비교 위젯 인자 — 회사는 고유번호·종목 표기가 있는 것만(2~3곳), 전망 문장은 근거가 달린 것만."""
+    from app.dashboards.peer import METRICS
+
+    cos = []
+    for c in p.get("companies") or []:
+        if isinstance(c, dict) and c.get("name") and c.get("corpCode") and c.get("ticker"):
+            cos.append({"name": str(c["name"])[:40], "corpCode": str(c["corpCode"])[:12], "stockCode": str(c.get("stockCode") or "")[:12], "ticker": str(c["ticker"])[:20]})
+    if len(cos) < 2:
+        return None
+    outlook = []
+    for it in p.get("outlook") or []:
+        cites = [{"docId": str(x.get("docId")), "chunk": str(x.get("chunk") or ""), "label": str(x.get("label") or "")[:80]} for x in (it.get("cites") or []) if isinstance(x, dict) and x.get("docId")] if isinstance(it, dict) else []
+        if cites and it.get("text"):
+            outlook.append({"title": str(it.get("title") or "")[:14], "text": str(it["text"])[:160], "cites": cites[:2]})
+    metrics = [m for m in p.get("metrics") or [] if m in METRICS]
+    return {"companies": cos[:3], "outlook": outlook[:4], **({"metrics": metrics} if metrics else {})}
 
 
 def _group(g: str) -> List[str]:
@@ -76,12 +105,10 @@ def _group(g: str) -> List[str]:
 
 def default(kind: str) -> Dict[str, Any]:
     if kind == "market":
+        # 금리·환율·원자재·주가지수 카드와 원/달러 차트는 위쪽 시장 홈(app/market/home.py)이 보여 준다(2026-11-03) — 겹치지 않는 것만
         ws: List[Dict[str, Any]] = [{"type": "ai_summary", "title": "오늘의 시장 요약", "size": "full"}]
-        ws += [{"type": "series_cards", "title": g, "params": {"seriesIds": _group(g)}, "size": "full"} for g in GROUPS]
-        ws += [
-            {"type": "series_chart", "title": "미 국채 금리(1년)", "params": {"seriesIds": ["us_2y", "us_10y"], "range": "1Y"}, "size": "l"},
-            {"type": "series_chart", "title": "원/달러(1년)", "params": {"seriesIds": ["krw_usd"], "range": "1Y"}, "size": "l"},
-        ]
+        ws += [{"type": "series_chart", "title": "미 국채 금리(1년)", "params": {"seriesIds": ["us_2y", "us_10y"], "range": "1Y"}, "size": "full"}]
+        ws += [{"type": "series_cards", "title": g, "params": {"seriesIds": _group(g)}, "size": "l"} for g in ("신용", "거시")]
         return clean({"widgets": ws}, kind)
     if kind == "data":
         return clean({"widgets": [
@@ -108,4 +135,7 @@ def catalog_text(kind: str) -> str:
     lines.append("크기(size): s | m | l | full")
     lines.append("시리즈(seriesIds 에 쓰는 id: 이름 · 묶음):")
     lines += [f"- {s.id}: {s.name} · {s.group}{' · 가상' if s.virtual else ''}" for s in SERIES]
-    return "\n".join(lines)
+    from app.dashboards.templates import catalog_text as template_text
+
+    extra = template_text(kind)
+    return "\n".join(lines) + (f"\n\n{extra}" if extra else "")

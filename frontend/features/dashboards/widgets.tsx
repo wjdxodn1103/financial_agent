@@ -11,8 +11,9 @@ import { assumptionsDrawerAtom } from "../assumptions/state";
 import { useWorkspace } from "../workspace/context";
 import { useOpenSource } from "../workspace/sourceHost";
 import { Thumbs } from "../workspace/components/Thumbs";
-import { getBrief } from "./api";
+import { getBrief, getMarketHomeChart } from "./api";
 import { LineChart, Sparkline } from "./charts";
+import { PeerBoard } from "./peer/PeerBoard";
 import type { BriefFact, BriefView, IngestStats, Widget, WidgetSize } from "./types";
 
 export const SIZE_CLASS: Record<WidgetSize, string> = { s: "lg:col-span-3", m: "lg:col-span-4", l: "lg:col-span-6", full: "lg:col-span-12" };
@@ -59,17 +60,21 @@ export function SeriesCardView({ c, onOpen }: { c: SeriesCard; onOpen: (id: stri
   );
 }
 
-export function SeriesModal({ id, onClose }: { id: string; onClose: () => void }) {
+/** 시리즈 차트 창 — id = 시장 시계열, ticker = 시장 홈 Yahoo 시세(지수·환율·원자재) */
+export function SeriesModal({ id, ticker, onClose }: { id?: string; ticker?: string; onClose: () => void }) {
   const [range, setRange] = useState("1Y");
   const [v, setV] = useState<SeriesView | null>(null);
   useEffect(() => {
     let off = false;
     setV(null);
-    void getMarketSeries(id, range).then((x) => !off && setV(x), () => undefined);
+    const get = ticker
+      ? getMarketHomeChart(ticker, range).then((c): SeriesView => ({ id: c.ticker, name: c.name, unit: c.unit, decimals: c.decimals, source: "yahoo", sourceLabel: c.source, virtual: false, range: c.range, points: c.points }))
+      : getMarketSeries(id ?? "", range);
+    void get.then((x) => !off && setV(x), () => undefined);
     return () => {
       off = true;
     };
-  }, [id, range]);
+  }, [id, ticker, range]);
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 px-4" onMouseDown={onClose}>
       <div onMouseDown={(e) => e.stopPropagation()} className="w-full max-w-[760px] rounded-[24px] bg-white p-6 shadow-xl">
@@ -124,10 +129,11 @@ function Sentence({ text, facts, onFact }: { text: string; facts: BriefFact[]; o
 
 function AiSummary({ initial, onSeries }: { initial: Partial<BriefView>; onSeries: (id: string) => void }) {
   const [b, setB] = useState<Partial<BriefView>>(initial);
+  const [ticker, setTicker] = useState<string | null>(null);
   useEffect(() => setB(initial), [initial]);
   const pick = (d: string) => void getBrief(d).then(setB, () => undefined);
   const facts = b.facts ?? [];
-  const onFact = (f: BriefFact) => f.seriesId && onSeries(f.seriesId);
+  const onFact = (f: BriefFact) => (f.ticker ? setTicker(f.ticker) : f.seriesId && onSeries(f.seriesId));
   if (!b.summary?.length) return <p className="py-6 text-[13px] text-text-secondary">아직 오늘의 요약이 없습니다(시장 시계열 수집 뒤에 만들어집니다).</p>;
   return (
     <div className="flex flex-col gap-3">
@@ -160,6 +166,7 @@ function AiSummary({ initial, onSeries }: { initial: Partial<BriefView>; onSerie
           ))}
         </div>
       )}
+      {ticker && <SeriesModal ticker={ticker} onClose={() => setTicker(null)} />}
     </div>
   );
 }
@@ -472,6 +479,8 @@ export function WidgetBody({ w, onSeries }: { w: Widget; onSeries: (id: string) 
     }
     case "note":
       return <p className="whitespace-pre-wrap text-[13px] leading-6 text-text-primary">{d.text}</p>;
+    case "peer_board":
+      return d.peer ? <PeerBoard data={d.peer} /> : null;
     default:
       return (
         <p className="flex items-center gap-1.5 text-[13px] text-text-secondary">

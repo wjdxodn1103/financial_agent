@@ -1,8 +1,9 @@
 """오늘의 시장 요약 — 숫자는 코드가(사실표), 말은 LLM 이(사실표의 [F#]를 가리키는 문장), 검증은 다시 코드가.
 
  - 사실표: 시리즈마다 값·기준일·전일/1주/1달 변화·출처(가상 표시), 크게 움직인 순, 금리 곡선, 대체 소스·품질 문제 수
+   지수·환율·원자재는 시장 홈과 같은 Yahoo 시세(market/home.quotes — 요약 숫자 = 위 화면 숫자, 2026-11-03), 금리·신용·거시는 시장 시계열
  - LLM: "오늘 요약" 3~5문장 + "AI 판단" 1~2문장 — 숫자를 직접 쓰지 않고 [F번호]로만 가리킨다
- - 검증: 문장에 숫자가 직접 들어 있으면(사실표 밖의 숫자) 그 문장을 뺀다, 없는 F 번호를 가리켜도 뺀다
+ - 검증: 문장에 숫자가 직접 들어 있으면(사실표 밖의 숫자) 그 문장을 뺀다, 없는 F 번호를 가리켜도, 한자가 섞여도 뺀다
 화면은 [F#] 자리에 사실표 값을 칩으로 보이고, 누르면 그 시리즈 차트(관측값)로 간다.
 """
 from __future__ import annotations
@@ -17,12 +18,14 @@ from sqlmodel import Session, select
 
 from app.db import DataIssue, MarketBrief, engine, iso, utcnow
 from app.llm.base import ChatParams
+from app.market import home
 from app.market.service import board
 
 log = logging.getLogger(__name__)
-KEY_SERIES = ("us_10y", "us_2y", "krw_usd", "usd_broad", "wti", "spx", "acwi", "kospi", "us_hy_oas")
+HOME_GROUPS = ("환율", "원자재", "주가지수")  # 시장 시계열에서 이 묶음은 빼고 시장 홈 시세로
 FACT_RX = re.compile(r"\[F(\d+)\]")
 NUM_RX = re.compile(r"\d")
+HAN_RX = re.compile(r"[㐀-䶿一-鿿豈-﫿]")  # 한자가 섞인 문장(모델 언어 섞임, 예: 同日)
 
 PROMPT = """너는 국부펀드 운용역에게 아침 시장 요약을 쓰는 보조다. 아래 '사실표'만 근거로 JSON 하나로만 답한다(설명·코드 블록 없이).
 {"summary": ["오늘 요약 문장", …(3~5개)], "judgement": ["AI 판단 문장", …(1~2개)]}
@@ -44,21 +47,18 @@ def _score(c: Dict[str, Any]) -> float:
 def make_facts(as_of: Optional[str] = None) -> List[Dict[str, Any]]:
     b = board(as_of)
     cards = [c for g in b["groups"] for c in g["series"] if c.get("value") is not None]
-    # 실데이터 시리즈의 큰 움직임 먼저(6개), 가상(데모) 시리즈는 3개까지
-    real = sorted([c for c in cards if not c.get("virtual")], key=_score, reverse=True)[:6]
-    virt = sorted([c for c in cards if c.get("virtual")], key=_score, reverse=True)[:3]
-    picked = [*real, *virt]
-    for c in cards:
-        if c["id"] in KEY_SERIES and c not in picked:
-            picked.append(c)
+    # 지수·환율·원자재는 시장 홈 시세 전부, 시장 시계열은 그 밖(금리·신용·거시)만 — 실데이터의 큰 움직임 먼저, 가상(데모)은 뒤에
+    rest = [c for c in cards if c["group"] not in HOME_GROUPS]
+    real = sorted([*home.quotes(as_of), *[c for c in rest if not c.get("virtual")]], key=_score, reverse=True)
+    virt = sorted([c for c in rest if c.get("virtual")], key=_score, reverse=True)
     facts: List[Dict[str, Any]] = []
-    for c in picked:
+    for c in [*real, *virt]:
         ch = c.get("changes") or {}
         parts = [f"{c['display']} {c['unit']}"]
         for k, ko in (("d1", "전일"), ("w1", "1주"), ("m1", "1달")):
             if ch.get(k):
                 parts.append(f"{ko} {ch[k]['display']}")
-        facts.append({"id": f"F{len(facts) + 1}", "seriesId": c["id"], "name": c["name"], "group": c["group"], "date": c["date"], "source": c["sourceLabel"], "virtual": c["virtual"],
+        facts.append({"id": f"F{len(facts) + 1}", "seriesId": c["id"], "ticker": c.get("ticker"), "name": c["name"], "group": c["group"], "date": c["date"], "source": c["sourceLabel"], "virtual": c["virtual"],
                       "value": c["display"], "unit": c["unit"], "changes": {k: v["display"] for k, v in ch.items()}, "text": f"{c['name']}: " + ", ".join(parts) + f" (기준일 {c['date']}, 출처 {c['sourceLabel']})" + (" [가상]" if c["virtual"] else "")})
     with Session(engine) as s:
         n_issues = len(s.exec(select(DataIssue.id).where(DataIssue.resolved_at == None)).all())  # noqa: E711
@@ -79,7 +79,7 @@ def _json(text: str) -> Optional[Dict[str, Any]]:
 
 
 # 숫자 검사에서 빼는 것 — 시리즈 이름 속 숫자(S&P 500·닛케이 225·미 국채 10년)와 기간 낱말(10년물·1주·1달·3개월)
-_NAMES = sorted({x.name for x in __import__("app.market.catalog", fromlist=["SERIES"]).SERIES}, key=len, reverse=True)
+_NAMES = sorted({x.name for x in __import__("app.market.catalog", fromlist=["SERIES"]).SERIES} | {it[1] for it in home.BY_TICKER.values()}, key=len, reverse=True)
 _PERIOD = re.compile(r"\d+\s*(?:년물|년|개월|달|주|일)(?![\d.,])")
 
 
@@ -93,8 +93,8 @@ def _check(sentences: List[Any], ids: set) -> tuple[List[str], List[str]]:
         for nm in _NAMES:
             bare = bare.replace(nm, "")
         bare = _PERIOD.sub("", bare)
-        if NUM_RX.search(bare) or not refs <= ids:
-            drop.append(s.strip())  # 사실표 밖의 숫자·없는 번호 — 뺀다
+        if NUM_RX.search(bare) or not refs <= ids or HAN_RX.search(s):
+            drop.append(s.strip())  # 사실표 밖의 숫자·없는 번호·한자 섞임 — 뺀다
             continue
         keep.append(s.strip())
     return keep, drop
@@ -104,6 +104,11 @@ async def make_brief(as_of: Optional[str] = None, llm: Any = None) -> Dict[str, 
     from app.llm.client import ReportLlm, provider_ready
 
     day = as_of or date.today().isoformat()
+    if not as_of:
+        try:
+            await home.refresh_if_stale()
+        except Exception:  # noqa: BLE001 — 못 받으면 쌓인 시세로 쓴다
+            log.exception("market home refresh failed")
     facts = make_facts(as_of)
     ids = {f["id"] for f in facts}
     summary: List[str] = []

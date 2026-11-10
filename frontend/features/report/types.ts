@@ -226,6 +226,8 @@ export interface ReportTheme {
   bandFill?: string | null;
   bandText?: string | null;
   sidebarFill?: string | null;
+  /** 요약 옆 칸 폭(%) — 없으면 40 */
+  sidebarWidth?: number | null;
   captionColor?: string | null;
   captionSize?: number | null;
   bodySize?: number | null;

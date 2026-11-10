@@ -122,4 +122,12 @@ def approve(session: Session, session_id: str, user: User, note: str = "") -> Di
     title = r.title or "문서"
     notify([r.created_by], workspace_id=r.workspace_id, kind="review", title=f"'{title}' 승인 — {user.name} {user.title}".strip()[:200], body=note[:300], link={"w": r.workspace_id, "v": "reports", "s": r.id},
            ref={"kind": "doc", "id": r.id}, dedupe_key=f"approved:{r.id}:{out['at']}", exclude=[user.id])
+    try:  # 승인된 결정으로 판단 기준 수정안(백그라운드 — 실패해도 승인은 그대로)
+        from app.criteria.revise import on_approved
+
+        on_approved(r.id, user.id)
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("criteria revise hook failed: %s", r.id)
     return out

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.db import Membership, Notification, engine, iso, utcnow
 from app.ids import id36
 
-KINDS = ("routine", "share", "review", "assumption", "source", "dashboard", "calendar", "system")
+KINDS = ("routine", "share", "review", "assumption", "source", "dashboard", "calendar", "proposal", "criteria", "system")
 
 
 def notify(user_ids: Iterable[str], *, title: str, workspace_id: str = "", kind: str = "system", body: str = "", link: Optional[Dict[str, Any]] = None,

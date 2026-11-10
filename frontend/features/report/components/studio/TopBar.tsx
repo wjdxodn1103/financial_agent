@@ -4,13 +4,14 @@
  * 상단 바 — 왼쪽 = 데이터 설정 · 작업 불러오기 · 저장하기(TaskButtons), 오른쪽 = 양식 / 패널 토글(문서·데이터) / DOCX 내보내기.
  * 작업 이름은 위쪽 경로에 보인다. 문서가 없는 작업(대화만)은 양식·내보내기 버튼을 숨긴다. 모델은 backend/.env 가 정한다(화면에 안 보인다).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Download, FileSpreadsheet, FileText, Flag, LayoutTemplate, Loader2, PanelRight, X } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, Flag, LayoutTemplate, Loader2, PanelRight, Scale, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { assumptionsDrawerAtom, needsLook, useDocAssumptions } from "../../../assumptions/state";
+import { proposalsDrawerAtom, REPORT_CHANGED, useDocProposals } from "../../../criteria/state";
 import { approveDoc } from "../../../workspace/api";
 import { FEATURES } from "../../../workspace/features";
 import { APPROVAL_KO } from "../../../workspace/components/SendDialog";
@@ -163,6 +164,40 @@ function AssumptionsButton() {
   );
 }
 
+/** 문서 머리 '검토 제안' — 판단 기준에 걸린 열린 제안 수. 누르면 검토 제안 서랍. 서랍에서 반영하면 이 문서를 다시 불러온다(dcf:report-changed). */
+function ProposalsButton() {
+  const session = useAtomValue(sessionAtom);
+  const report = useAtomValue(reportAtom);
+  const ws = useWorkspace();
+  const actions = useReportActions();
+  const open = useSetAtom(proposalsDrawerAtom);
+  const { items, reload } = useDocProposals(ws.workspaceId, session?.id);
+  const sid = session?.id;
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<{ reportId?: string }>).detail?.reportId !== sid) return;
+      void actions.reload();
+      void reload();
+    };
+    window.addEventListener(REPORT_CHANGED, on);
+    return () => window.removeEventListener(REPORT_CHANGED, on);
+  }, [sid, actions, reload]);
+  const openCount = items.filter((p) => p.status === "open").length;
+  if (!session || !items.length) return null;
+  return (
+    <button
+      type="button"
+      title="판단 기준에 걸린 검토 제안 — 근거(데이터 원문·기준 원문·과거 결정)와 함께"
+      onClick={() => open({ reportId: session.id, title: report?.title || "문서" })}
+      className="flex h-8 cursor-pointer items-center gap-1 rounded-md border border-neutral-200 px-2 text-[11px] text-text-secondary hover:bg-neutral-50 hover:text-text-primary"
+    >
+      <Scale className="size-3.5" aria-hidden />
+      <span>검토 제안</span>
+      {openCount > 0 && <span className="rounded bg-neutral-800 px-1 text-[10px] font-semibold text-white tabular-nums">{openCount}</span>}
+    </button>
+  );
+}
+
 export function TopBar() {
   const actions = useReportActions();
   const report = useAtomValue(reportAtom);
@@ -194,6 +229,7 @@ export function TopBar() {
       <div className="flex shrink-0 items-center gap-2">
         <ApprovalChip />
         {FEATURES.assumptions && <AssumptionsButton />}
+        {FEATURES.reviewProposals && <ProposalsButton />}
         <TemplateButton />
         <PanelToggles />
         <button

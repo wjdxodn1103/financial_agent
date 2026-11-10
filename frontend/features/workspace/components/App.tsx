@@ -19,7 +19,7 @@ import { Login } from "./Login";
 import { WorkspaceHome } from "./WorkspaceHome";
 import { WorkspaceShell } from "./WorkspaceShell";
 
-const VIEWS: WorkspaceView[] = ["home", "schedule", "tasks", "search", "channel", "research", "reports", "documents", "company", "assets", "formats", "ledger", "reviews", "requests", "members", "sources", "market", "dataStatus", "dashboard", "routines", "quality", "guideline", "calendar"];
+const VIEWS: WorkspaceView[] = ["home", "schedule", "tasks", "search", "channel", "research", "reports", "documents", "company", "assets", "formats", "ledger", "reviews", "requests", "members", "sources", "market", "dataStatus", "dashboard", "routines", "quality", "guideline", "calendar", "criteria"];
 
 interface Route {
   w: string | null;

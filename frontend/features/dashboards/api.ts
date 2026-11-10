@@ -1,6 +1,6 @@
 /** 대시보드 REST(BE api/dashboard_routes.py). */
 import { jsonInit, req } from "../report/api";
-import type { BriefView, DashboardKind, DashboardView } from "./types";
+import type { BriefView, DashboardKind, DashboardView, MarketChartView, MarketHomeView } from "./types";
 
 const q = (o: Record<string, string | number | undefined>) => {
   const p = Object.entries(o).filter(([, v]) => v !== undefined && v !== "" && v !== 0);
@@ -20,3 +20,6 @@ export const proposeDashboard = (kind: DashboardKind, workspaceId: string, instr
 export const decideDraft = (draftId: string, approve: boolean) => req<DashboardView>(`/api/dashboard/drafts/${encodeURIComponent(draftId)}/${approve ? "approve" : "discard"}`, jsonInit("POST", {}));
 export const getBrief = (date?: string) => req<BriefView>(`/api/market/brief${q({ date })}`);
 export const regenerateBrief = () => req<BriefView>("/api/market/brief/regenerate", jsonInit("POST", {}));
+export const getMarketHome = () => req<MarketHomeView>("/api/market/home");
+export const getMarketHomeChart = (ticker: string, range: string) => req<MarketChartView>(`/api/market/home/chart${q({ ticker, range })}`);
+export const refreshMarketHome = () => req<{ started: boolean }>("/api/market/home/refresh", jsonInit("POST", {}));

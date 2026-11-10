@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 from app import config
 from app.auth import require_member
 from app.dashboards.resolve import widget_data
+from app.dashboards.templates import label_of
 from app.dashboards.widgets import ALLOWED, catalog_text, clean, default
 from app.db import DashboardSpec, User, engine, iso
 from app.ids import id36
@@ -27,7 +28,9 @@ PROMPT = """아래는 대시보드 구성(JSON)이다. 사용자 요청대로 �
 규칙:
 - 요청과 상관없는 위젯은 그대로 둔다(순서·id·params 그대로).
 - 아래 목록에 있는 위젯 종류·시리즈 id 만 쓴다. 없는 것을 요청하면 spec 은 그대로 두고 summary 에 이유를 적는다.
-- 위젯은 12개 이하."""
+- 위젯은 12개 이하.
+- 맨 아래 '양식'에 맞는 요청(예: 회사 두 곳을 비교해 달라)이면 spec 을 쓰지 말고 그 양식의 답 꼴로만 답한다.
+- type 이 peer_board 인 위젯은 양식이 만든 것이다 — params 의 companies·outlook 은 그대로 두고, 지표를 빼거나 더해 달라는 요청만 metrics 로 고친다."""
 
 
 def _scope(kind: str) -> str:
@@ -67,7 +70,7 @@ def view(kind: str, workspace_id: str, user: User, as_of: Optional[str] = None, 
     _check(kind, workspace_id, user, write=False)
     with Session(engine) as s:  # 세션 안에서 값을 꺼내 둔다(커밋 뒤 만료된 행을 밖에서 읽지 않게)
         act = _active(s, kind, workspace_id, user.id)
-        act_id, act_spec = act.id, dict(act.spec or {})
+        act_id, act_spec, act_prompt = act.id, dict(act.spec or {}), act.prompt or ""
         dr = _draft(s, kind, workspace_id)
         draft = None
         if dr:
@@ -82,6 +85,8 @@ def view(kind: str, workspace_id: str, user: User, as_of: Optional[str] = None, 
         "id": act_id,
         "widgets": _render(show, workspace_id, user, as_of),
         "preview": bool(preview and mine),
+        "template": label_of(show),
+        "prompt": draft["prompt"] if (preview and mine and draft) else act_prompt,  # 지금 보이는 구성을 만든 요청(대화창에 남긴다)
         "draft": draft,
         "canEdit": _can_edit(kind, workspace_id, user),
         "asOf": as_of,
@@ -129,11 +134,16 @@ async def propose(kind: str, workspace_id: str, user: User, instruction: str, ll
             log.exception("dashboard propose failed")
             continue
         got = _json(getattr(res, "content", "") or "")
-        if got and isinstance(got.get("spec"), dict):
+        if got and (isinstance(got.get("spec"), dict) or got.get("template")):
             break
-    if not got or not isinstance(got.get("spec"), dict):
+    if not got or not (isinstance(got.get("spec"), dict) or got.get("template")):
         raise HTTPException(502, "AI 가 구성을 만들지 못했습니다. 다시 말해 주세요.")
-    spec = clean(got["spec"], kind)
+    from app.dashboards import templates
+
+    built = await templates.build(got, kind, workspace_id, user, llm) if got.get("template") else None  # 양식이면 구성은 코드가 만든다(자료도 이때 받는다)
+    if built is None and not isinstance(got.get("spec"), dict):
+        raise HTTPException(400, "이 화면에서는 쓸 수 없는 양식입니다.")
+    spec = clean(built or got["spec"], kind)
     if not spec["widgets"]:
         raise HTTPException(400, "쓸 수 있는 위젯이 남지 않았습니다. 다시 말해 주세요.")
     with Session(engine) as s:

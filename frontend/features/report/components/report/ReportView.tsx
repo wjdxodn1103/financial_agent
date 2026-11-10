@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { StepAssumptions } from "../../../assumptions/StepAssumptions";
+import { StepProposals } from "../../../criteria/StepProposals";
 import { FEATURES } from "../../../workspace/features";
 import { canChatAtom, focusStepAtom, numberFocusAtom, numbersAtom, reportAtom, sessionAtom, versionsAtom } from "../../atoms";
 import type { NumberSpan } from "../../types";
@@ -69,7 +70,7 @@ export const ReportView = memo(function ReportView() {
   }, [blocks]);
   const theme = report?.theme;
   const themeVars = (theme
-    ? { "--doc-accent": theme.accent ?? "#1F3A5F", "--doc-band": theme.bandFill ?? theme.accent ?? "#1F3A5F", "--doc-band-text": theme.bandText ?? "#fff", "--doc-side": theme.sidebarFill ?? "#F5F5F5", "--doc-caption": theme.captionColor ?? "#1F3A5F" }
+    ? { "--doc-accent": theme.accent ?? "#1F3A5F", "--doc-band": theme.bandFill ?? theme.accent ?? "#1F3A5F", "--doc-band-text": theme.bandText ?? "#fff", "--doc-side": theme.sidebarFill ?? "#F5F5F5", "--doc-caption": theme.captionColor ?? "#1F3A5F", "--doc-side-w": `${theme.sidebarWidth ?? 40}%` }
     : undefined) as React.CSSProperties | undefined;
 
   // 숫자 출처 탭에서 고른 숫자로 본문을 옮긴다
@@ -144,7 +145,7 @@ export const ReportView = memo(function ReportView() {
                 {side.length > 0 && (
                   // 원본처럼 오른쪽에 띄우되, 문서 칸이 좁으면(3단 화면) 위아래로 쌓는다 — 옆 본문·표와 사이드바 표가 서로 잘리지 않게. 사이드바 표는 촘촘하게(행 이름은 줄바꿈)
                   <aside
-                    className="mt-3 mb-3 p-3 @lg:float-right @lg:ml-5 @lg:w-[40%] @lg:min-w-[236px] [&_table]:text-[11px] [&_td]:!px-1.5 [&_th]:!px-1.5 [&_td:first-child]:!whitespace-normal"
+                    className="mt-3 mb-3 p-3 @lg:float-right @lg:ml-5 @lg:w-[var(--doc-side-w,40%)] @lg:min-w-[236px] [&_table]:text-[11px] [&_td]:!px-1.5 [&_th]:!px-1.5 [&_td:first-child]:!whitespace-normal"
                     style={{ background: "var(--doc-side, #F5F5F5)" }}
                   >
                     {side.map((j) => (
@@ -153,6 +154,7 @@ export const ReportView = memo(function ReportView() {
                   </aside>
                 )}
                 {FEATURES.assumptions && session && b.step && blocks[i + 1]?.step !== b.step && <StepAssumptions docRef={session.id} step={b.step} title={report?.title ?? ""} />}
+                {FEATURES.reviewProposals && session && b.step && blocks[i + 1]?.step !== b.step && <StepProposals reportId={session.id} step={b.step} title={report?.title ?? ""} />}
                 {b.kind === "heading" && section && (
                   <>
                     {renaming?.step === section.step ? (

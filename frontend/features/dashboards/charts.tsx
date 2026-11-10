@@ -3,9 +3,9 @@
 /** 대시보드 차트 — 라이브러리 없이 SVG(토스 톤: 얇은 선, 옅은 눈금, 값 글자 최소). */
 import { useMemo, useRef, useState } from "react";
 
-const PALETTE = ["#3182f6", "#1F3A5F", "#7A9CC6", "#0f9d8a", "#8b5cf6"];
+export const PALETTE = ["#3182f6", "#1F3A5F", "#7A9CC6", "#0f9d8a", "#8b5cf6"];
 
-export function Sparkline({ values, width = 120, height = 32, className }: { values: number[]; width?: number; height?: number; className?: string }) {
+export function Sparkline({ values, width = 120, height = 32, className, color = "#3182f6" }: { values: number[]; width?: number; height?: number; className?: string; color?: string }) {
   const d = useMemo(() => {
     const v = values.filter((x) => Number.isFinite(x));
     if (v.length < 2) return "";
@@ -17,7 +17,7 @@ export function Sparkline({ values, width = 120, height = 32, className }: { val
   if (!d) return <svg width={width} height={height} className={className} aria-hidden />;
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className={className} aria-hidden>
-      <path d={d} fill="none" stroke="#3182f6" strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
+      <path d={d} fill="none" stroke={color} strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
@@ -124,6 +124,78 @@ export function LineChart({ series, height = 220 }: { series: LineSeries[]; heig
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+export interface BarSeries {
+  name: string;
+  values: (number | null)[];
+}
+
+/** 묶음 막대 — 범주마다 계열을 나란히(음수는 0 선 아래로). 막대를 누르면 onPick(계열, 범주). */
+export function GroupedBars({ categories, series, height = 220, decimals = 1, onPick }: { categories: string[]; series: BarSeries[]; height?: number; decimals?: number; onPick?: (s: number, c: number) => void }) {
+  const W = 640;
+  const H = height;
+  const pad = { l: 44, r: 8, t: 16, b: 24 };
+  const vals = series.flatMap((s) => s.values).filter((v): v is number => v != null);
+  if (!categories.length || !vals.length) return <p className="py-10 text-center text-[13px] text-text-secondary">값이 없습니다.</p>;
+  const lo = Math.min(0, ...vals);
+  const hi = Math.max(0, ...vals);
+  const y0 = lo - (hi - lo) * (lo < 0 ? 0.08 : 0);
+  const y1 = hi + (hi - lo || 1) * 0.1;
+  const y = (v: number) => pad.t + (1 - (v - y0) / (y1 - y0)) * (H - pad.t - pad.b);
+  const gw = (W - pad.l - pad.r) / categories.length;
+  const bw = Math.min(26, (gw * 0.72) / series.length);
+  const fmt = (v: number) => v.toLocaleString("ko-KR", { maximumFractionDigits: decimals, minimumFractionDigits: Math.abs(v) < 100 ? decimals : 0 });
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={series.map((s) => s.name).join(", ")}>
+        {niceTicks(y0, y1).map((t) => (
+          <g key={t}>
+            <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} stroke={t === 0 ? "#d1d6db" : "#eef0f3"} />
+            <text x={pad.l - 6} y={y(t) + 3} textAnchor="end" fontSize={10} fill="#8b95a1" className="num">
+              {t.toLocaleString("ko-KR")}
+            </text>
+          </g>
+        ))}
+        {categories.map((c, i) => {
+          const gx = pad.l + i * gw + (gw - bw * series.length - 3 * (series.length - 1)) / 2;
+          return (
+            <g key={c}>
+              {series.map((s, k) => {
+                const v = s.values[i];
+                if (v == null) return null;
+                const top = Math.min(y(v), y(0));
+                const h = Math.max(1, Math.abs(y(v) - y(0)));
+                const x = gx + k * (bw + 3);
+                return (
+                  <g key={s.name} onClick={onPick ? () => onPick(k, i) : undefined} className={onPick ? "cursor-pointer" : undefined}>
+                    <title>{`${s.name} ${c} ${fmt(v)}`}</title>
+                    <rect x={x} y={top} width={bw} height={h} rx={3} fill={PALETTE[k % PALETTE.length]} />
+                    {i === categories.length - 1 && (
+                      <text x={x + bw / 2} y={v >= 0 ? top - 4 : top + h + 11} textAnchor="middle" fontSize={10} fontWeight={700} fill="#333d4b" className="num">
+                        {fmt(v)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              <text x={pad.l + i * gw + gw / 2} y={H - 6} textAnchor="middle" fontSize={10} fill="#8b95a1">
+                {c}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-text-secondary">
+        {series.map((s, k) => (
+          <span key={s.name} className="flex items-center gap-1">
+            <span className="size-2 rounded-sm" style={{ background: PALETTE[k % PALETTE.length] }} />
+            {s.name}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

@@ -22,6 +22,8 @@ demo/.demo_report
 demo/.rehearsal_*
 demo/nbim/.ws
 demo/nbim/.report
+demo/semi/state.json
 # KIRS 샘플(사내 시험용, 재배포 금지)에서 뽑은 정답지·덤프·대조 결과 — 스크립트만 올린다
 demo/kirs/*.json
 demo/kirs/*.md
+demo/criteria/.ws

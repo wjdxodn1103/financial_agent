@@ -702,6 +702,70 @@ class AssumptionCheck(SQLModel, table=True):
     changed: bool = False
 
 
+# ── 판단 기준·검토 제안(2026-10-31) ────────────────────────────────────
+
+class Criterion(SQLModel, table=True):
+    """판단 기준 — KIC 투자 노하우를 '이러면(조건) → 이렇게 검토(방향)'로. 한 줄 = 한 판, 같은 기준의 판들은 key 로 묶는다.
+    scope = company(사내 공통 — 관리자가 승인) | workspace(그 워크스페이스 — 소유자가 승인). status = draft(AI 초안·수정안) | active | archived | rejected.
+    condition 은 가정 조건과 같은 꼴(코드 판정 — 조건이 참이면 '도달'), limit 은 한도 기준의 여유 계산용, source 는 그 기준이 나온 원문 인용."""
+
+    __tablename__ = "criterion"
+
+    id: str = Field(primary_key=True)
+    key: str = Field(index=True)
+    version: int = 1
+    base_id: Optional[str] = None  # 수정안이 고치는 판
+    scope: str = Field(default="workspace", index=True)
+    workspace_id: str = Field(default="", index=True)  # 사내 공통이면 ""
+    status: str = Field(default="draft", index=True)
+    title: str = ""
+    when_text: str = ""
+    kind: str = "numeric"  # numeric | qualitative | stance(하우스뷰 입장 — 프롬프트에만)
+    condition: Dict[str, Any] = _json({})  # {metric, ledgerMetric, period, op, threshold, unit}
+    direction: str = "review"  # expand | hold | reduce | review
+    applies: Dict[str, Any] = _json({})  # {name, ticker, assetClass}
+    limit: Dict[str, Any] = _json({})  # {op, threshold, unit}
+    source: Dict[str, Any] = _json({})  # {docKind, docRef, docTitle, step, quote, anchor}
+    origin: Dict[str, Any] = _json({})  # {kind: extract|revision, reportId, relation, why}
+    conflicts: List[Dict[str, Any]] = _json([])  # [{id, key, version, why, by: code|ai}]
+    latest: Dict[str, Any] = _json({})  # {대상 열쇠: {result, display, asOf, at}} — 바뀜 감지
+    note: str = ""
+    created_by: str = ""
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ReviewProposal(SQLModel, table=True):
+    """검토 제안 — 새 자료로 판단 기준(또는 문서 가정)에 걸린 문서에 '○○ 검토 제안'을 낸다. 방향은 코드(기준+판정), 설명·고칠 문장은 LLM(코드가 숫자·인용 대조).
+    근거 셋 = evidence.data(새 자료 칸) · evidence.criterion(기준 원문·판) · evidence.decision(과거 결정 문장). status = open | applied | agenda | dismissed.
+    doc JSON 이 아니라 표에 둔다 — 턴·headless 가 끝날 때 doc 을 통째로 저장해 그 사이 넣은 것이 지워지고, 홈·알림이 워크스페이스 단위로 찾는다."""
+
+    __tablename__ = "review_proposal"
+
+    id: str = Field(primary_key=True)
+    workspace_id: str = Field(index=True)
+    report_id: str = Field(index=True)
+    criterion_id: Optional[str] = None  # 판 고정
+    assumption_id: Optional[str] = None
+    dedupe: str = Field(default="", index=True)
+    target: Dict[str, Any] = _json({})
+    direction: str = "review"
+    check: Dict[str, Any] = _json({})  # {result, value{display, period, base, rule}, anchors, asOf}
+    headroom: List[Dict[str, Any]] = _json([])  # [{criterionId, title, display, gap, anchors}]
+    changed: str = ""
+    explanation: str = ""
+    sentences: List[Dict[str, Any]] = _json([])  # [{step, original, revised, why}]
+    evidence: Dict[str, Any] = _json({})  # {data: [앵커], criterion: {id, key, version, title, quote, anchor}, decision: {quote, anchor, title}}
+    trigger: Dict[str, Any] = _json({})
+    status: str = Field(default="open", index=True)
+    result: Dict[str, Any] = _json({})  # {versionId, agendaId, agendaStatus, applied}
+    decided_by: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class MarketEvent(SQLModel, table=True):
     """경제 일정 — 지표 발표·중앙은행 회의·휴장·만기. 출처: FRED 발표일·공식 일정표·규칙(만기). 전사 공용(워크스페이스 없음).
     발표되면 실제치를 코드가 기록한다(감지 출처·관측 기간·받은 시각을 detect 에 고정). 예상치는 사람이 넣는다(무료 공식 출처 없음)."""

@@ -528,3 +528,59 @@ def fetch_business(corp_code: str, corp_name: str, year: Optional[int] = None, r
         period_map=period_map or None,
     )
     return {**snap, "title": title, "paragraphs": len(paras)}
+
+
+# ── 주식의 총수 현황 ────────────────────────────────────────────────────
+
+def fetch_shares(corp_code: str, corp_name: str, year: int, report: str = "annual") -> Dict[str, Any]:
+    """정기보고서 '주식의 총수 현황'(stockTotqySttus) → 스냅샷 문서. 행 = 보통주·우선주·합계, 열 = 발행주식의 총수·자기주식수·유통주식수.
+    시가총액·PER·PBR 계산이 이 칸을 읽는다(dashboards/peer.py) — 주식 수를 순이익 ÷ EPS 로 어림하지 않게."""
+    key = _require_key()
+    if report not in REPORTS:
+        raise ConnectorError("DART_BAD_PARAM", "보고서는 사업보고서·반기·1분기·3분기 가운데 하나여야 합니다.", 400)
+    try:
+        body = _http_get(f"{API}/stockTotqySttus.json", {"crtfc_key": key, "corp_code": corp_code, "bsns_year": str(year), "reprt_code": REPORTS[report]["code"]}).json()
+    except httpx.HTTPError as e:
+        raise ConnectorError("DART_UNREACHABLE", f"DART 에 연결하지 못했습니다: {e}", 502) from e
+    status = str(body.get("status") or "")
+    if status != "000":
+        code, msg = _STATUS.get(status, ("DART_ERROR", f"DART 오류({status}): {body.get('message') or ''}"))
+        raise ConnectorError(code, msg, 404 if code == "NO_DATA" else 409)
+    rows_all = [r for r in body.get("list") or [] if str(r.get("se") or "").strip() in ("보통주", "우선주", "합계")]
+    table = [["구분", "발행주식의 총수", "자기주식수", "유통주식수"]]
+    for r in rows_all:
+        cells = [_amount(r.get(f)) or "" for f in ("istc_totqy", "tesstk_co", "distb_stock_co")]
+        if any(cells):
+            table.append([str(r.get("se")).strip(), *cells])
+    if len(table) < 2:
+        raise ConnectorError("NO_DATA", "DART 응답에 주식 수가 없습니다.", 404)
+    from app.docs.extract import table_text
+
+    rept = REPORTS[report]
+    stlm = str(next((r.get("stlm_dt") for r in rows_all if r.get("stlm_dt")), ""))
+    rcept_no = str(next((r.get("rcept_no") for r in rows_all if r.get("rcept_no")), ""))
+    title = f"{corp_name} 주식의 총수 현황({stlm or year} 기준)"
+    paras = [{"page": None, "kind": "table", "rows": table, "text": table_text(table), "heading": f"{corp_name} 주식의 총수 현황 ({year} {rept['ko']}, {stlm} 기준)", "unit": "주", "sheet": "주식의 총수"}]
+    snap = make_snapshot(
+        snapshot_id("dart", corp_code, "shares", str(year), rept["code"]),
+        file_name=f"DART_{corp_name}_{year}_{rept['ko']}_주식총수.json",
+        file_type="DART",
+        paras=paras,
+        raw=body,
+        card={"title": title, "docType": "공시 재무제표(DART)", "date": f"{rcept_no[:4]}-{rcept_no[4:6]}-{rcept_no[6:8]}" if len(rcept_no) >= 8 else "", "issuer": "금융감독원 전자공시(DART)",
+              "company": corp_name, "oneLine": f"{year} {rept['ko']}의 발행주식 총수·자기주식·유통주식 수({stlm} 기준)"},
+        snapshot={"connector": "dart", "title": "DART 주식의 총수 현황", "params": {"corpCode": corp_code, "corpName": corp_name, "year": year, "report": report, "what": "shares"},
+                  "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rceptNo": rcept_no, "asOf": stlm,
+                  "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else "https://dart.fss.or.kr"},
+        figure_source="dart",
+    )
+    return {**snap, "title": title, "asOf": stlm}
+
+
+def corp_market(corp_code: str) -> str:
+    """기업개황의 시장 구분 → Yahoo 종목 접미('KS' 유가증권 · 'KQ' 코스닥 · '' 그 밖)."""
+    try:
+        co = _http_get(f"{API}/company.json", {"crtfc_key": _require_key(), "corp_code": corp_code}).json()
+    except httpx.HTTPError:
+        return ""
+    return {"Y": "KS", "K": "KQ"}.get(str(co.get("corp_cls") or ""), "")

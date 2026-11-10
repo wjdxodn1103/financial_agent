@@ -616,12 +616,17 @@ def _workspace_context(workspace_id: str, doc: Dict[str, Any], owner_id: str) ->
         from app.research.service import visible_templates
         from app.templates_import.registry import report_type_views
 
+        from app.criteria.prompting import relevant_criteria
+
         cur = s.get(ResearchTable, doc.get("currentTableId") or "") if doc.get("currentTableId") else None
+        doc_ids = report_scope_ids(s, ws, doc, owner_id)
         return {
             "workspaceId": workspace_id,
             "ownerId": owner_id,
-            "documentIds": report_scope_ids(s, ws, doc, owner_id),
+            "documentIds": doc_ids,
             "teamNotes": confirmed_notes(s, workspace_id),
+            # 이 문서와 관련된 사용 중 판단 기준(숫자 조건은 코드 판정 결과와 함께) — 대화·작성기 브리프에 싣는다
+            "_criteria": relevant_criteria(s, workspace_id, doc, doc_ids),
             "ledgerChoices": choices_of(s, workspace_id),
             "_templates": visible_templates(s, workspace_id, owner_id),
             # 이 작업 문서 양식의 표·차트 양식(F번호 — research/forms.py)

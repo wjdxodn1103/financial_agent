@@ -53,6 +53,31 @@ def discard_draft(draft_id: str, user: UserDep):
     return dash.view(kind, ws, user)
 
 
+@router.get("/market/home")
+def market_home(user: UserDep):
+    """시장 홈(금융 데이터 AI 에이전트 기본 화면) — 주요 지수·환율·원자재·금리. 오래됐으면 뒤에서 다시 받는다."""
+    from app.market import home
+
+    return home.view()
+
+
+@router.get("/market/home/chart")
+def market_home_chart(user: UserDep, ticker: str, range: str = "1Y"):
+    from app.market import home
+
+    try:
+        return home.chart(ticker, range)
+    except KeyError:
+        raise HTTPException(404, "시장 홈에 없는 종목입니다.")
+
+
+@router.post("/market/home/refresh")
+def market_home_refresh(user: UserDep):
+    from app.market import home
+
+    return {"started": home.ensure_refresh()}
+
+
 @router.get("/market/brief")
 def market_brief(user: UserDep, date: Optional[str] = None):
     from app.market.summary import brief_view

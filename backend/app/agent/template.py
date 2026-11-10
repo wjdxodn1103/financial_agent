@@ -128,8 +128,8 @@ def blueprint_items(bp: Dict[str, Any]) -> List[Item]:
     for p in bp.get("parts") or []:
         if p.get("role") == "summary":
             blocks = list(p.get("blocks") or []) + list(p.get("sidebar") or [])
-            items.append({"id": "summary", "title": "요약", "phase": "front", "level": "required", "aliases": ["요약", "투자 요약"],
-                          "desc": f"{rules.get('claim') or ''} 주장 {p.get('claims') or 3}개를 '[제목] 주장' 줄로 시작하는 문단으로.",
+            items.append({"id": "summary", "title": p.get("heading") or "요약", "phase": "front", "level": "required", "aliases": ["요약", "투자 요약"],
+                          "desc": p.get("guide") or f"{rules.get('claim') or ''} 주장 {p.get('claims') or 3}개를 '[제목] 주장' 줄로 시작하는 문단으로.",
                           "queries": [], "inputs": [], "part": "summary", "role": "summary", "depth": 1, "blocks": blocks})
         elif p.get("role") == "chapter":
             for k, s in enumerate(p.get("subtopics") or []):

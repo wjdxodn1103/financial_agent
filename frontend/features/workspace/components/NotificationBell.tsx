@@ -9,6 +9,7 @@ import { getNotificationCount, listNotifications, readNotifications } from "../a
 import { useTasksChanged, useWorkspace } from "../context";
 import type { NotificationItem, WorkspaceView } from "../types";
 import { assumptionsDrawerAtom, setPendingDrawer } from "../../assumptions/state";
+import { proposalsDrawerAtom, setPendingProposal } from "../../criteria/state";
 
 const POLL_MS = 30_000;
 
@@ -26,6 +27,7 @@ function ago(iso: string): string {
 export function NotificationBell() {
   const ws = useWorkspace();
   const openDrawer = useSetAtom(assumptionsDrawerAtom);
+  const openProposals = useSetAtom(proposalsDrawerAtom);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationItem[] | null>(null);
@@ -75,10 +77,14 @@ export function NotificationBell() {
     }
     const { w, v, s, t } = n.link || {};
     // 가정 판정 알림 — 문서(또는 드라이브)를 열고 가정 서랍을 그 가정에 맞춰 연다
-    const r = n.ref as { kind?: string; id?: string; docRef?: string; docKind?: "report" | "data"; title?: string };
+    const r = n.ref as { kind?: string; id?: string; docRef?: string; docKind?: "report" | "data"; title?: string; reportId?: string };
     const drawer = r?.kind === "assumption" && r.id && r.docRef ? { docKind: r.docKind ?? "report", docRef: r.docRef, title: r.title ?? "", focusId: r.id } : null;
     if (drawer && w && w !== ws.workspaceId) setPendingDrawer(drawer);
     else if (drawer) setTimeout(() => openDrawer(drawer), 0);
+    // 검토 제안 알림 — 문서를 열고 검토 제안 서랍을 그 제안에 맞춰 연다
+    const prop = r?.kind === "proposal" && r.id && r.reportId ? { reportId: r.reportId, title: n.title, focusId: r.id } : null;
+    if (prop && w && w !== ws.workspaceId) setPendingProposal(prop);
+    else if (prop) setTimeout(() => openProposals(prop), 0);
     if (w && w !== ws.workspaceId) {
       const q = new URLSearchParams({ w, ...(v ? { v } : {}), ...(s ? { s } : {}), ...(t ? { t } : {}) });
       window.location.assign(`?${q.toString()}`);

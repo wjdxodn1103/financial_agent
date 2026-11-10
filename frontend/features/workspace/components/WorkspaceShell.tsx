@@ -25,6 +25,8 @@ import { Brand } from "./Brand";
 import { NotificationBell } from "./NotificationBell";
 import { WorkspaceSourceHost } from "../sourceHost";
 import { AssumptionsDrawerHost } from "../../assumptions/AssumptionsDrawer";
+import { CriteriaView } from "../../criteria/CriteriaView";
+import { ProposalsDrawerHost } from "../../criteria/ProposalsDrawer";
 import { SourcesView } from "../../data/SourcesView";
 import { DashboardPage } from "../../dashboards/DashboardPage";
 import { RoutinesView } from "../../routines/RoutinesView";
@@ -116,10 +118,11 @@ const GROUPS: Group[] = [
     id: "review",
     label: "문서 검수",
     icon: ClipboardCheck,
-    views: ["reviews", "requests", ...(FEATURES.assistants ? (["guideline"] as const) : [])],
+    views: ["reviews", "requests", ...(FEATURES.criteria ? (["criteria"] as const) : []), ...(FEATURES.assistants ? (["guideline"] as const) : [])],
     children: [
       { view: "reviews", label: "검수" },
       { view: "requests", label: "검토 요청" },
+      ...(FEATURES.criteria ? [{ view: "criteria" as const, label: "판단 기준" }] : []),
       ...(FEATURES.assistants ? [{ view: "guideline" as const, label: "가이드라인 점검" }] : []),
     ],
   },
@@ -151,6 +154,7 @@ const VIEW_LABEL: Record<WorkspaceView, string> = {
   quality: "품질·이용",
   guideline: "가이드라인 점검",
   calendar: "경제 일정",
+  criteria: "판단 기준",
 };
 
 function groupOf(view: WorkspaceView): Group | undefined {
@@ -437,6 +441,8 @@ export function WorkspaceShell({ view, reportId, tableId, query, onLogout }: { v
             <RequestsView />
           ) : view === "guideline" ? (
             <GuidelineView />
+          ) : view === "criteria" && FEATURES.criteria ? (
+            <CriteriaView key={reportId ?? ""} initial={reportId} />
           ) : view === "calendar" ? (
             <CalendarView key={reportId ?? ""} initial={reportId} />
           ) : view === "quality" && FEATURES.quality && ws.meta.admins?.includes(ws.me.id) ? (
@@ -462,6 +468,7 @@ export function WorkspaceShell({ view, reportId, tableId, query, onLogout }: { v
       </main>
       <WorkspaceSourceHost />
       {FEATURES.assumptions && <AssumptionsDrawerHost />}
+      {FEATURES.reviewProposals && <ProposalsDrawerHost />}
     </div>
   );
 }

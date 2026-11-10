@@ -1,4 +1,4 @@
-# DCF (Document Creation & Fact-check, 옛 가칭 에비던스 데스크) — 확정 기획 · 구현 계획
+# AssociateLM (2026-11-03 이름 바꿈 — 옛 이름 ANCHOR·DCF·에비던스 데스크) — 확정 기획 · 구현 계획
 
 > 투자 리포트와 사내 문서를 **숫자 하나까지 근거로 쓰고, 근거로 검수하는** 팀용 AI 워크스페이스.
 > 「국부펀드 KIC, AI 에이전트 공모전」 출품작. 예선 기획서 = `docs/KIC_AI_에이전트_기획서_초안.pptx`(확정 2026-10-19).
@@ -176,6 +176,17 @@
   - 검수: 추출 프롬프트가 수식어를 떼지 않게 · 추출이 빠뜨린 숫자를 코드가 문장을 훑어 주장으로 만들고(가까운 원장 지표 이름) 못 읽은 숫자는 '대조하지 않은 숫자'로 표시 · 줄인 지표 이름을 문장 속 더 긴 원장 지표로 바로잡기(`review/rules.align_metrics`).
   - 팀 기록 범위: '리스크 섹션' ↔ '4. 리스크 요인'처럼 글자가 달라도 섹션을 가리는 낱말이 겹치면 해당(`records/service.scope_matches`) — 카드·작성 브리프 둘 다.
   - 채택 사유: 브라우저 prompt 대신 그 자리 입력줄(`AdoptReason`) · 원장 엑셀 계산 시트의 비율 차이는 %p 서식.
+- **판단 기준 루프(2026-10-31, 미커밋 — 기획서 v4 의 중심, 기획서 이름 ANCHOR):** KIC 판단 기준을 항목으로 두고(조건 → 방향 · 대상 · 출처 인용 · 판 · 승인자, 사내 = 관리자 승인 / 워크스페이스 = 소유자 승인) 새 데이터가 오면 걸린 문서에 근거 달린 **검토 제안**을, 승인된 보고서로 **기준 수정안**을 낸다.
+  - 백엔드 `backend/app/criteria/` — `match`(코드 판정·한도 여유, LLM 0) · `extract`(정책서=가이드라인 캐시 0회, 하우스뷰=코드, 회의록·문서=LLM 1회 + 인용·방향 낱말·대상 검증) · `service`(목록·고치기·승인·판) · `proposals`(새 자료 훅 = `assumptions/watch.recheck_for_docs` 끝, 처음 판정은 기준선 · 걸린 문서 = 문서 가정 + 대상·지표 문장 · LLM 1회 설명·고칠 문장 — 숫자는 허용 값만, 결정 문장·단정어·'유지된다' 거름 · 승인 문서는 반영 대신 재심의 안건) · `revise`(훅 = `sharing.approve` 끝, 새 규칙·수정 → 같은 key 다음 판 draft) · `prompting`(관련 기준만 대화·작성기 브리프에, 숫자는 코드 판정 결과와 함께; 섹션 근거 `evidence[step].criteria`). 표 `Criterion`·`ReviewProposal`(db.py). API `api/criteria_routes.py`. `chat_base`·`writer_system` 에 '검토 제안으로만' 규칙.
+  - 화면 `frontend/features/criteria/` — 문서 검수 ▸ 판단 기준(사용 중·승인 대기·보관, 바뀐 것·충돌·판 이력, 기준 뽑기, 날짜 지정 다시 판정) · 검토 제안 서랍(문서 머리 버튼·섹션 끝 줄·홈 '오늘 확인할 것'·알림). 스위치 `FEATURES.criteria`·`reviewProposals`.
+  - 시연 `demo/criteria/seed_criteria.py`(해외주식운용실 — HLDS(가상), `--scan --reset`·`--reports` 로 다시) · 점검 `demo/criteria/check_criteria.py`(서버·LLM 없이). 흐름 실측: 9/30 기준선 0건 → 10/29(10-Q 24.0%) 제안 2건 → 작성 중 리뷰 반영 → 재심의 안건 초안 → '25% 아래면 축소 검토' 문장 넣고 승인 → 수정안 v2 → 승인(v1 보관).
+  - 남은 것: 재심의 안건 작성기의 단위 오류('1860억 달러')·남은 [F번호] 표시(기존 작성기 문제), 실제 미국 상장사 10-Q 재현, 하우스뷰 입장 → 방향 매핑, 평가 세트.
+- **이름 AssociateLM · 시장 홈(2026-11-03, 미커밋):** 서비스 이름 AssociateLM(부제 "주어진 원칙에 따라 작업을 하고, 수행한 작업마다 근거를 한눈에 제시해주는 금융 AI 어시스턴트"). 기획서의 세 에이전트 = 금융 데이터(기본 화면 시장 대시보드 + 대화로 비교 표·차트) · 금융 문서 작업 · 업무 자동화.
+  - 시장 홈 = '대시보드 ▸ 시장' 화면 위쪽(네이버 증권·야후 파이낸스 참고) — 주요 지수 8 카드 · 큰 차트(코스피·S&P 500·원/달러·금 선물, 카드·줄을 누르면 그 종목, 1개월~1년) · 환율 · 원자재·선물 · 금리. 기존 위젯·AI 요약은 아래 '시장 위젯 · AI 요약'.
+  - 백엔드 `app/market/home.py` — 지수·환율·원자재 = Yahoo 일봉(`prices.load` → `price_bar`, 19 표기, 원/위안은 KRW=X ÷ CNY=X), 금리 = 시장 시계열 카드(FRED·미 재무부). 2시간 지나면 보는 사람이 있을 때 뒤에서 다시 받음(`scheduler.spawn("market_home")`). API `GET /api/market/home` · `GET /api/market/home/chart?ticker=&range=` · `POST /api/market/home/refresh`(dashboard_routes).
+  - 화면 `frontend/features/dashboards/MarketHome.tsx` — 변화는 ▲▼와 숫자만(판정 색 없음, 기존 위젯과 같게).
+  - Yahoo 는 개인·비상업 약관 → 로그인 뒤 화면·'시연용' 표시, 상용은 라이선스 공급자로 교체(`price_bar.source`). 아직: 대화 모드(요청한 비교를 표·차트로 그려 에셋 저장).
+  - 겹침 정리: 아래 위젯은 AI 요약 · 미 국채 금리(1년) · 신용 · 거시만(`widgets.default("market")`, 활성 구성도 같게). 오늘의 시장 요약 사실표도 지수·환율·원자재는 `home.quotes()`(화면과 같은 Yahoo 값, 전일·1주·1달 %), 금리·신용·거시만 시장 시계열 — 요약 쓰기 전 오래됐으면 `home.refresh_if_stale()`. 그 칩을 누르면 Yahoo 차트 창(`SeriesModal ticker=`).
 
 ## 1. 원칙
 

@@ -36,7 +36,7 @@ export interface WorkspaceDetail {
   users: UserInfo[];
 }
 
-export type WorkspaceView = "home" | "schedule" | "tasks" | "search" | "channel" | "research" | "reports" | "documents" | "company" | "assets" | "formats" | "ledger" | "reviews" | "requests" | "members" | "sources" | "market" | "dataStatus" | "dashboard" | "routines" | "quality" | "guideline" | "calendar";
+export type WorkspaceView = "home" | "schedule" | "tasks" | "search" | "channel" | "research" | "reports" | "documents" | "company" | "assets" | "formats" | "ledger" | "reviews" | "requests" | "members" | "sources" | "market" | "dataStatus" | "dashboard" | "routines" | "quality" | "guideline" | "calendar" | "criteria";
 
 // ─── 드라이브(BE drive.py) ───
 export type FolderAccess = "all" | "private" | "members";
@@ -474,7 +474,7 @@ export interface MyPage {
 export interface NotificationItem {
   id: string;
   workspaceId: string;
-  kind: "routine" | "share" | "review" | "assumption" | "source" | "dashboard" | "calendar" | "system";
+  kind: "routine" | "share" | "review" | "assumption" | "source" | "dashboard" | "calendar" | "proposal" | "criteria" | "system";
   title: string;
   body: string;
   link: { w?: string; v?: string; s?: string; t?: string };
